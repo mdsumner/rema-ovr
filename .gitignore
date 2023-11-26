@@ -1,1 +1,2 @@
-tarball/*
+tarball/*.tar.gz
+.Rproj.user
