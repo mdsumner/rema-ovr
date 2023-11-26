@@ -5,7 +5,7 @@ We have create a VRT with efficient overviews, so a GDAL-capable software can re
 The DSN is here: 
 
 ```
-/vsicurl/https://raw.githubusercontent.com/mdsumner/rema-ovr/main/REMA-2m_dem_ovr.vrt  @github/clipboard-copy-element
+/vsicurl/https://raw.githubusercontent.com/mdsumner/rema-ovr/main/REMA-2m_dem_ovr.vrt 
 ```
 
 Size is 2725100, 2921100
