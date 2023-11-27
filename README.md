@@ -54,6 +54,12 @@ plot(crop(r1km, ext(0, xmax(r1km), 0, ymax(r1km))))
 
 ```
 
+
+![image](https://github.com/mdsumner/rema-ovr/assets/4107631/230e331a-8828-4f37-95a8-2a9ee9845e93)
+
+
+
+
 ## PS. Don't use these files below, they are fyi
 
  Use the single-end-point VRT above with the warper :)
