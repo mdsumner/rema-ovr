@@ -33,11 +33,26 @@ plot(project(rema, aggregate(rast(rema), 1e4), by_util = TRUE))
 
 ```
 
+
+
 ![image](https://github.com/mdsumner/rema-ovr/assets/4107631/1d257f68-fd3b-4296-9b20-67193031aaf5)
 
 
 ![image](https://github.com/mdsumner/rema-ovr/assets/4107631/869b4426-a8ca-43ba-a3f5-79fe9656df07)
 
+
+
+We can get exactly the level we want, say let's hit the 1km: 
+
+
+```R
+r1km <- project(rema, rast(ext(rema), res = 1000, crs  = crs(rema)), by_util = TRUE)
+r1km
+
+plot(crop(r1km, ext(0, xmax(r1km), 0, ymax(r1km))))
+
+
+```
 
 ## PS. Don't use these files below, they are fyi
 
