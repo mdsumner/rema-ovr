@@ -13,7 +13,7 @@
   <SourceBand>1</SourceBand>
 </Overview>
 <Overview>
-  <SourceFilename relativeToVRT="0">/vsicurl/https://github.com/mdsumner/rema-ovr/raw/main/rema_mosaic_100m_v2.0_dem_int16.tif</SourceFilename>
+  <SourceFilename relativeToVRT="0">/vsicurl/https://github.com/mdsumner/rema-ovr/raw/main/rema_mosaic_100m_v2.0_filled_cop30_dem_int16.tif</SourceFilename>
   <SourceBand>1</SourceBand>
 </Overview>
 <Overview>
