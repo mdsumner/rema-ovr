@@ -46,16 +46,34 @@ plot(project(rema, aggregate(rast(rema), 1e4), by_util = TRUE))
 These files are involved along with the 2m DEM tiles of the original 2m VRT. 
 
 ```
-/vsicurl/https://raw.githubusercontent.com/mdsumner/rema-ovr/main/rema-vrt/10m_dem_tiles.vrt
-/vsicurl/https://raw.githubusercontent.com/mdsumner/rema-ovr/main/rema-vrt/32m_dem_tiles.vrt
-/vsicurl/https://github.com/mdsumner/rema-ovr/raw/main/rema_mosaic_100m_v2.0_dem_int16.tif
-/vsicurl/https://github.com/mdsumner/rema-ovr/raw/main/rema_mosaic_500m_v2.0_filled_cop30_dem.tif
-/vsicurl/https://github.com/mdsumner/rema-ovr/raw/main/rema_mosaic_1km_v2.0_filled_cop30_dem.tif
+https://raw.githubusercontent.com/mdsumner/rema-ovr/main/rema-vrt/10m_dem_tiles.vrt
+https://raw.githubusercontent.com/mdsumner/rema-ovr/main/rema-vrt/32m_dem_tiles.vrt
+https://github.com/mdsumner/rema-ovr/raw/main/rema_mosaic_100m_v2.0_filled_cop30_dem_int16.tif
+https://github.com/mdsumner/rema-ovr/raw/main/rema_mosaic_500m_v2.0_filled_cop30_dem.tif
+https://github.com/mdsumner/rema-ovr/raw/main/rema_mosaic_1km_v2.0_filled_cop30_dem.tif
 ```
 
 The .vrt files are provided by REMA v2 itself. The 500m and 1km tifs are also provided by REMA, but in very slow-to-acccess tarballs. They are copied here. 
 
-The 100m is a conversion of the `rema_mosaic_100m_v2.0_dem.tif` to remove overviews, use sparse tiles, Int16 storage and ZSTD compression so it's small enough for Github. 
+The 100m is a conversion of the `rema_mosaic_100m_v2.0_dem.tif` to remove overviews, use sparse tiles, and Int16 storage  so it's small enough for Github. 
 
-We might use the filled_cop30 for the 100m we just got a bit delayed on that. 
+We use the filled_cop30 in preference. 
 
+## File conversion
+
+
+```
+gdal_translate rema_mosaic_100m_v2.0_filled_cop30_dem.tif rema_mosaic_100m_v2.0_filled_cop30_dem_int16.tif -of COG -co COMPRESS=LZW -co SPARSE_OK=YES -co OVERVIEWS=NONE -ot Int16
+```
+
+(this one is not used by the VRT): rema_mosaic_100m_v2.0_dem_int16.tif was created with 
+
+```
+gdal_translate rema_mosaic_100m_v2.0_dem.tif -of COG -co COMPRESS=ZSTD -co SPARSE_OK=YES -co OVERVIEWS=NONE out.tif -ot Int16
+```
+
+
+
+## Code of Conduct
+  
+Please note that the rema-ovr project is released with a [Contributor Code of Conduct](https://contributor-covenant.org/version/2/1/CODE_OF_CONDUCT.html). By contributing to this project, you agree to abide by its terms.
