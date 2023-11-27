@@ -48,6 +48,15 @@ We can get exactly the level we want, say let's hit the 1km:
 ```R
 r1km <- project(rema, rast(ext(rema), res = 1000, crs  = crs(rema)), by_util = TRUE)
 r1km
+#class       : SpatRaster 
+#dimensions  : 5842, 5450, 1  (nrow, ncol, nlyr)
+#resolution  : 1000, 1000  (x, y)
+#extent      : -2700100, 2749900, -2500100, 3341900  (xmin, xmax, ymin, ymax)
+#coord. ref. : WGS 84 / Antarctic Polar Stereographic (EPSG:3031) 
+#source(s)   : memory
+#name        : REMA-2m_dem_ovr 
+#min value   :       -66.44531 
+#max value   :      4639.31250
 
 plot(crop(r1km, ext(0, xmax(r1km), 0, ymax(r1km))))
 
