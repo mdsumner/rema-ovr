@@ -15,6 +15,42 @@ Size is 2725100, 2921100
 Use the warper, it will target the right level of detail. This works as well in Python osgeo.gdal as it does at the command line and in R's terra (there's some gotchas still in terra). 
 
 
+
+```python
+from osgeo import gdal
+import rasterio
+
+gdal.UseExceptions()
+
+## Davis in EPSG:3031
+pt = [2302286, 490792]
+dsn = "/vsicurl/https://raw.githubusercontent.com/mdsumner/rema-ovr/main/REMA-2m_dem_ovr.vrt"
+ds = gdal.Open(dsn)
+r = 500
+gdal.Warp("/tmp/davis.tif", ds,  outputBounds = [pt[0] - r, pt[1] - r, pt[0] + r, pt[1] + r])
+#<osgeo.gdal.Dataset; proxy of <Swig Object of type 'GDALDatasetShadow *' at 0x7f566106efc0> >
+
+r = rasterio.open("/tmp/davis.tif")
+r.shape
+#(500, 500)
+# array([[[17.632812, 17.632812, 17.632812, ..., 17.648438, 17.648438,
+#          17.648438],
+#         [17.632812, 17.632812, 17.632812, ..., 17.648438, 17.648438,
+#          17.648438],
+#         [17.632812, 17.632812, 17.632812, ..., 17.648438, 17.648438,
+#          17.648438],
+#         ...,
+#         [17.648438, 17.648438, 17.648438, ..., 31.132812, 31.109375,
+#          31.0625  ],
+#         [17.648438, 17.648438, 17.648438, ..., 31.09375 , 31.070312,
+#          31.03125 ],
+#         [17.648438, 17.648438, 17.648438, ..., 31.070312, 31.039062,
+#          31.015625]]], dtype=float32)
+```
+
+
+
+
 ```R
 library(terra)
 rema <- rast("/vsicurl/https://raw.githubusercontent.com/mdsumner/rema-ovr/main/REMA-2m_dem_ovr.vrt")
