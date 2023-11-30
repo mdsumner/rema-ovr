@@ -122,6 +122,10 @@ r_davis
 plot(r_davis, col = hcl.colors(64))
 ```
 
+![image](https://github.com/mdsumner/rema-ovr/assets/4107631/e82d7a66-9bbd-46aa-b0d8-55e0bc38f3cd)
+
+
+
 ## PS. Don't use these files below, they are fyi
 
  Use the single-end-point VRT above with the warper :)
