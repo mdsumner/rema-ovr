@@ -104,6 +104,23 @@ plot(crop(r1km, ext(0, xmax(r1km), 0, ymax(r1km))))
 
 
 
+```R
+ex <- c(2301786, 490292, 2302786, 491292)[c(1, 3, 2, 4)]
+r_davis <- project(rema, rast(ext(ex), res = 2, crs  = crs(rema)), by_util = TRUE)
+r_davis
+# class       : SpatRaster 
+# dimensions  : 500, 500, 1  (nrow, ncol, nlyr)
+# resolution  : 2, 2  (x, y)
+# extent      : 2301786, 2302786, 490292, 491292  (xmin, xmax, ymin, ymax)
+# coord. ref. : WGS 84 / Antarctic Polar Stereographic (EPSG:3031) 
+# source(s)   : memory
+# name        : REMA-2m_dem_ovr 
+# min value   :        17.63281 
+# max value   :        44.60938 
+
+
+plot(r_davis, col = hcl.colors(64))
+```
 
 ## PS. Don't use these files below, they are fyi
 
