@@ -5,24 +5,24 @@
 
 
 <Overview>
-  <SourceFilename relativeToVRT="0">/vsicurl/https://raw.githubusercontent.com/mdsumner/rema-ovr/main/rema-vrt/10m_dem_tiles.vrt</SourceFilename>
+  <SourceFilename relativeToVRT="0">/vsicurl/https://github.com/mdsumner/rema-ovr/raw/refs/heads/main/rema-vrt/10m_dem_tiles.vrt</SourceFilename>
   <SourceBand>1</SourceBand>
 </Overview>
 <Overview>
-  <SourceFilename relativeToVRT="0">/vsicurl/https://raw.githubusercontent.com/mdsumner/rema-ovr/main/rema-vrt/32m_dem_tiles.vrt</SourceFilename>
+  <SourceFilename relativeToVRT="0">/vsicurl/https://github.com/mdsumner/rema-ovr/raw/refs/heads/main/rema-vrt/32m_dem_tiles.vrt</SourceFilename>
   <SourceBand>1</SourceBand>
 </Overview>
 <Overview>
-  <SourceFilename relativeToVRT="0">/vsicurl/https://raw.githubusercontent.com/mdsumner/rema-ovr/main/rema_mosaic_100m_v2.0_filled_cop30_dem_int16.tif</SourceFilename>
+  <SourceFilename relativeToVRT="0">/vsicurl/https://github.com/mdsumner/rema-ovr/raw/refs/heads/main/rema_mosaic_100m_v2.0_filled_cop30_dem_int16.tif</SourceFilename>
   <SourceBand>1</SourceBand>
 </Overview>
 <Overview>
-  <SourceFilename relativeToVRT="0">/vsicurl/https://raw.githubusercontent.com/mdsumner/rema-ovr/main/rema_mosaic_500m_v2.0_filled_cop30_dem.tif</SourceFilename>
+  <SourceFilename relativeToVRT="0">/vsicurl/https://github.com/mdsumner/rema-ovr/raw/refs/heads/main/rema_mosaic_500m_v2.0_filled_cop30_dem.tif</SourceFilename>
   <SourceBand>1</SourceBand>
 </Overview>
 
 <Overview>
-  <SourceFilename relativeToVRT="0">/vsicurl/https://raw.githubusercontent.com/mdsumner/rema-ovr/main/rema_mosaic_1km_v2.0_filled_cop30_dem.tif</SourceFilename>
+  <SourceFilename relativeToVRT="0">/vsicurl/https://github.com/mdsumner/rema-ovr/raw/refs/heads/main/rema_mosaic_1km_v2.0_filled_cop30_dem.tif</SourceFilename>
   <SourceBand>1</SourceBand>
 </Overview>
 
