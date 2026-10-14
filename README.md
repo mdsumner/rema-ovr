@@ -10,6 +10,21 @@ The DSN is here:
 
 Size is 2725100, 2921100
 
+## Browser explorer
+
+https://mdsumner.github.io/rema-ovr/ (source in `docs/`)
+
+The page reads the same DSN as GDAL does: it fetches `REMA-2m_dem_ovr.vrt`, follows its `<Overview>` entries
+(10m and 32m VRTs, then the 100m, 500m and 1km COGs), and for each screen tile picks the level whose pixel
+matches the screen, then the best internal overview inside each COG, and reads only those byte ranges
+(geotiff.js, no server). The network ledger in the side panel shows that a whole-continent view costs about
+the same as a view of one valley. Also: hillshade/slope/aspect/contours, point drill-down through every
+level plus the PGC count/mad/date siblings, profiles, measuring, box stats with GeoTIFF download and a
+GDAL/Python/R recipe for the same box, and swipe comparison against NASA GIBS imagery and the unfilled 100m.
+
+The 2m, 10m and 32m levels live in the PGC bucket and only work in the browser if that bucket sends CORS
+headers; the page probes it and falls back to the GitHub-hosted levels if not.
+
 ## Examples
 
 Use the warper, it will target the right level of detail. This works as well in Python osgeo.gdal as it does at the command line and in R's terra (there's some gotchas still in terra). 

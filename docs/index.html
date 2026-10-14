@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>REMA Explorer</title>
+<meta name="description" content="Browser explorer for REMA v2 Antarctic elevation, read straight from one VRT DSN with external overviews.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <header class="brand">
+      <div>
+        <h1>REMA explorer</h1>
+        <p class="sub">One DSN, six levels, read live from COGs in the browser</p>
+      </div>
+      <button id="sideToggle" class="icon" title="Hide panel" aria-label="Hide panel">&laquo;</button>
+    </header>
+
+    <section class="card" id="dsnCard">
+      <label class="lbl" for="dsn">DSN</label>
+      <div class="row">
+        <input id="dsn" type="text" spellcheck="false">
+        <button id="dsnLoad" title="Load this VRT">Load</button>
+      </div>
+      <div id="pyramid" class="pyramid"></div>
+      <div id="banner" class="banner" hidden></div>
+    </section>
+
+    <section class="card">
+      <h2>Go to</h2>
+      <div class="row">
+        <input id="goto" type="text" list="placeList" placeholder="place, 'lat lon' or 'x y' (EPSG:3031)">
+        <button id="gotoBtn">Go</button>
+      </div>
+      <datalist id="placeList"></datalist>
+      <div class="chips" id="placeChips"></div>
+    </section>
+
+    <section class="card">
+      <h2>Display</h2>
+      <div class="grid2">
+        <label>Render
+          <select id="mode">
+            <option value="colorshade">Colour + hillshade</option>
+            <option value="color">Colour</option>
+            <option value="shade">Hillshade</option>
+            <option value="slope">Slope</option>
+            <option value="aspect">Aspect</option>
+          </select>
+        </label>
+        <label>Palette
+          <select id="palette"></select>
+        </label>
+        <label>Min (m) <input id="vmin" type="number" step="any"></label>
+        <label>Max (m) <input id="vmax" type="number" step="any"></label>
+        <label>Stretch
+          <select id="stretch">
+            <option value="linear">Linear</option>
+            <option value="sqrt">Square root</option>
+            <option value="equalize">Equalise (view)</option>
+          </select>
+        </label>
+        <label class="check"><input id="autoStretch" type="checkbox"> Auto range (2-98% of view)</label>
+        <label>&nbsp;<button id="autoRange" title="Set min/max to the 2-98% range of what is on screen, once">Stretch once</button></label>
+      </div>
+      <canvas id="legend" width="300" height="14"></canvas>
+      <div class="legendLabels"><span id="legMin"></span><span id="legMid"></span><span id="legMax"></span></div>
+      <details>
+        <summary>Hillshade and contours</summary>
+        <div class="grid2">
+          <label>Azimuth <input id="az" type="range" min="0" max="360" step="5"></label>
+          <label>Altitude <input id="alt" type="range" min="5" max="85" step="1"></label>
+          <label>Exaggeration <input id="exag" type="range" min="-2" max="2" step="0.1"></label>
+          <label>Shade mix <input id="mix" type="range" min="0" max="1" step="0.05"></label>
+        </div>
+        <div class="hint" id="exagLabel"></div>
+        <div class="grid2">
+          <label class="check"><input id="contours" type="checkbox"> Contours</label>
+          <label>Interval (m) <input id="cint" type="number" min="0" step="any" placeholder="auto"></label>
+        </div>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>Level</h2>
+      <div class="grid2">
+        <label>Pyramid level
+          <select id="forceLevel"><option value="auto">Auto (like the warper)</option></select>
+        </label>
+        <label class="check"><input id="bilinear" type="checkbox" checked> Bilinear when upsampling</label>
+      </div>
+      <p class="hint">Auto picks the coarsest level whose pixel is no bigger than 1.5 screen pixels, then the best internal overview inside each COG.</p>
+    </section>
+
+    <section class="card">
+      <h2>Compare</h2>
+      <div class="grid2">
+        <label>Layer
+          <select id="cmpLayer"></select>
+        </label>
+        <label>Mode
+          <select id="cmpMode">
+            <option value="swipe">Swipe</option>
+            <option value="overlay">Overlay</option>
+          </select>
+        </label>
+        <label>Opacity <input id="cmpOpacity" type="range" min="0" max="1" step="0.05" value="1"></label>
+        <label>Date (imagery) <input id="cmpDate" type="date"></label>
+      </div>
+      <div id="cmpLegendWrap" hidden>
+        <canvas id="cmpLegend" width="300" height="14"></canvas>
+        <div class="legendLabels"><span id="cmpMin"></span><span id="cmpMid"></span><span id="cmpMax"></span></div>
+      </div>
+      <p class="hint" id="cmpHint"></p>
+    </section>
+
+    <section class="card">
+      <h2>Overlays</h2>
+      <div class="grid2">
+        <label class="check"><input id="ovGrat" type="checkbox" checked> Graticule</label>
+        <label class="check"><input id="ovFoot" type="checkbox"> Source tiles</label>
+        <label class="check"><input id="ovTiles" type="checkbox"> Display tiles</label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Network ledger</h2>
+      <div id="ledgerNow" class="ledgerNow"></div>
+      <table class="ledger">
+        <thead><tr><th>View width</th><th>Level</th><th>Req</th><th>Bytes</th><th>Time</th></tr></thead>
+        <tbody id="ledgerRows"></tbody>
+      </table>
+      <div id="ledgerHosts" class="hint"></div>
+      <p class="hint">Each row is one settled view. The point: a view of the whole continent costs about the same as a view of one valley.</p>
+    </section>
+
+    <footer class="foot">
+      REMA v2: Howat et al. 2019 / PGC. Overviews and VRT: <a href="https://github.com/mdsumner/rema-ovr">mdsumner/rema-ovr</a>.
+      Imagery: NASA GIBS. Heights are metres above the WGS84 ellipsoid.
+    </footer>
+  </aside>
+
+  <main id="mapWrap">
+    <canvas id="map"></canvas>
+    <div id="swipe" class="swipe" hidden><div class="swipeHandle" title="Drag to compare"></div></div>
+    <div id="toolbar" class="toolbar">
+      <button id="sideOpen" class="icon" title="Show panel" aria-label="Show panel" hidden>&raquo;</button>
+      <button data-tool="info" class="tool on" title="Click for point info (I)">Info</button>
+      <button data-tool="profile" class="tool" title="Click points, double-click to finish (P)">Profile</button>
+      <button data-tool="measure" class="tool" title="Click points, double-click to finish (M)">Measure</button>
+      <button data-tool="box" class="tool" title="Drag a box for stats and download (B)">Box</button>
+      <span class="sep"></span>
+      <button id="zoomIn" class="icon" title="Zoom in">+</button>
+      <button id="zoomOut" class="icon" title="Zoom out">&minus;</button>
+      <button id="home" title="Whole continent">Home</button>
+      <button id="copyLink" title="Copy a link to this view">Link</button>
+    </div>
+    <div id="readout" class="readout"></div>
+    <div id="status" class="status"></div>
+    <div id="scalebar" class="scalebar"><div class="bar"></div><span></span></div>
+    <div id="mapMsg" class="mapMsg" hidden></div>
+    <section id="panel" class="panel" hidden>
+      <header><h3 id="panelTitle"></h3><button id="panelClose" class="icon" aria-label="Close">&times;</button></header>
+      <div id="panelBody"></div>
+    </section>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/proj4@2.12.1/dist/proj4.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fzstd@0.1.1/umd/index.js"></script>
+<script src="tiffwrite.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
