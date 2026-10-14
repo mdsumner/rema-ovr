@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>REMA Explorer Guide</title>
+<meta name="description" content="How to use the REMA explorer, and how one VRT with external overviews makes the whole REMA mosaic streamable.">
+<style>
+:root {
+  --bg: #0d1117; --panel: #151b23; --line: #2b3440; --text: #e3e8ee; --muted: #8d99a8;
+  --accent: #6cc4ff; --accent2: #ffb86b; --code: #0b0f14;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 var(--sans); }
+main { max-width: 860px; margin: 0 auto; padding: 24px 16px 80px; }
+a { color: var(--accent); }
+h1 { font-size: 26px; margin: 8px 0 4px; }
+h2 { font-size: 19px; margin: 40px 0 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+h3 { font-size: 15.5px; margin: 22px 0 6px; color: var(--accent2); }
+p, li { color: #cfd6de; }
+.lede { color: var(--muted); margin-top: 0; }
+nav.toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0; }
+nav.toc a { border: 1px solid var(--line); border-radius: 14px; padding: 2px 10px; text-decoration: none; font-size: 13px; }
+code, pre { font-family: var(--mono); font-size: 12.5px; }
+code { background: var(--code); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+pre { background: var(--code); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; overflow-x: auto; line-height: 1.45; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 8px 0; display: block; overflow-x: auto; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+td.mono { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+kbd { font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--panel); }
+.note { border-left: 3px solid var(--accent2); background: var(--panel); padding: 8px 12px; border-radius: 0 6px 6px 0; margin: 12px 0; }
+.back { font-size: 13px; }
+svg { width: 100%; height: auto; display: block; margin: 12px 0; }
+svg text { font-family: var(--sans); font-size: 12px; fill: var(--text); }
+svg .m { fill: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+<main>
+<p class="back"><a href="./">&larr; back to the explorer</a></p>
+<h1>REMA explorer: guide and design</h1>
+<p class="lede">The Reference Elevation Model of Antarctica, read straight from cloud storage by the browser, at any scale, from one DSN.</p>
+<nav class="toc">
+  <a href="#guide">Guide</a><a href="#tools">Tools</a><a href="#levels">Levels and pinning</a><a href="#boundaries">Tile boundaries</a>
+  <a href="#compare">Compare</a><a href="#globe">Globe</a><a href="#design">Design</a><a href="#official">Official COGs</a>
+  <a href="#vrt">The overview VRT</a><a href="#browser">What the browser does</a><a href="#findings">Findings</a><a href="#next">Next</a>
+</nav>
+
+<h2 id="guide">Guide</h2>
+<p>Drag to pan, scroll or pinch to zoom, double-click to zoom in (<kbd>Shift</kbd> + double-click zooms out). <kbd>+</kbd> <kbd>-</kbd> and the arrow keys work too. <b>Home</b> shows the whole continent; <b>Link</b> copies a URL that restores the view, styling, level and comparison.</p>
+<p>The top-right readout shows the cursor position in EPSG:3031 and longitude/latitude, the elevation from the tile on screen and which level it came from, and the polar stereographic scale factor <i>k</i>. The status bar (bottom right) shows the level(s) on screen and cumulative requests and bytes. The scale bar is corrected for <i>k</i> at the view centre, so it is a ground distance, not a grid distance.</p>
+<p>Heights are metres above the WGS84 ellipsoid, as REMA publishes them. Sea level around Antarctica sits tens of metres below the ellipsoid in places, which is why the ocean in the filled mosaics is not zero.</p>
+
+<h3>Display</h3>
+<p>Render as colour, hillshade, colour + hillshade, slope or aspect. <b>Auto range</b> (on by default) stretches the palette to the 2-98% range of what is on screen every time the view settles; typing a min or max turns it off. <b>Equalise</b> uses the histogram of the current view. Hillshade exaggeration grows with pixel size so a 1 km view still shows relief; the slider multiplies that. Contours draw at a nice interval for the current range, or at the interval you type.</p>
+
+<h3 id="tools">Tools</h3>
+<table>
+<tr><th>Tool</th><th>How</th><th>What you get</th></tr>
+<tr><td>Info <kbd>I</kbd></td><td>Click</td><td>Coordinates, scale factor, grid convergence; elevation at <i>every</i> level at that point with the file it came from; for the PGC levels, the sibling <code>count</code>, <code>mad</code>, <code>mindate</code>, <code>maxdate</code> values and the list of strip DEMs in that tile's <code>meta.txt</code>. Buttons to zoom to 2 m there, copy coordinates, or produce a recipe for a 1 km box at 2 m.</td></tr>
+<tr><td>Profile <kbd>P</kbd></td><td>Click vertices, double-click or <kbd>Enter</kbd> to finish</td><td>Elevation profile sampled at roughly one screen pixel, from the level that matches that spacing; ground length, climb and drop, cost; hover the chart to see the point on the map; CSV download.</td></tr>
+<tr><td>Measure <kbd>M</kbd></td><td>Click vertices, finish as above</td><td>Ground and grid length, and area when there are three or more points.</td></tr>
+<tr><td>Box <kbd>B</kbd></td><td>Drag a rectangle</td><td>Reads the box at up to 1024 px across from the matching level: stats and histogram, a Float32 GeoTIFF download (EPSG:3031, nodata -9999), and the same box as a GDAL CLI, Python and R recipe against the DSN.</td></tr>
+</table>
+<p><kbd>Esc</kbd> cancels a line or box in progress.</p>
+
+<h3 id="levels">Levels and pinning</h3>
+<p>The pyramid list in the side panel shows the six levels, where each lives, and whether this page can reach it (green dot). The levels in use for the current view are highlighted. In <b>Auto</b>, each screen tile reads the coarsest level whose pixel is no larger than 1.5 screen pixels, and inside that file the matching internal overview.</p>
+<p><b>Pin</b> fixes one level so it no longer switches with zoom: click a row in the pyramid, choose it in the Level select, or press <b>Pin level</b> on the map toolbar to pin whatever is on screen now. A pinned level is read at its own native pixel size at every zoom and drawn with nearest neighbour, so zooming in shows its real pixels and zooming out shows it decimated. Pinning a fine level and zooming far out would need too many tiles; the page says so rather than fetching them.</p>
+
+<h3 id="boundaries">Tile boundaries</h3>
+<table>
+<tr><th>Boundary</th><th>Shows</th></tr>
+<tr><td>Source files</td><td>The footprint of every file of the level, labelled with the tile name when zoomed in.</td></tr>
+<tr><td>COG internal blocks</td><td>The 512 px blocks of the image actually read inside each file (full resolution or an internal overview), which is the unit of a range request. Hover to see the overview index and block row/column.</td></tr>
+<tr><td>Display tiles</td><td>The explorer's own 256 px EPSG:3031 tile grid, with the level, number of files and read time of each tile.</td></tr>
+</table>
+<p><b>Follow LOD</b> redraws boundaries for whatever level and overview the current zoom is reading, so they change as you zoom. <b>Fixed</b> keeps one level's boundaries on screen at every zoom, which is the way to see, for example, how the 50 km 2 m tiles sit inside the 100 km 10 m tiles, or how a single 512 px block of the 1 km file spans 512 km.</p>
+
+<h3 id="compare">Compare</h3>
+<p>Pick a second layer and <b>Swipe</b> (drag the handle) or <b>Overlay</b> (opacity) it against the main view:</p>
+<ul>
+<li>NASA GIBS polar imagery: Blue Marble mosaics, and daily MODIS / VIIRS true colour (pick a summer date; winter is polar night).</li>
+<li>REMA 100 m without the Copernicus GLO-30 fill, and a <i>Cop30 fill vs REMA</i> layer that shows in orange where the filled overview has values the strips never had.</li>
+<li>The PGC sibling products <code>count</code>, <code>mad</code>, <code>mindate</code>, <code>maxdate</code>. These have no overview pyramid, so they only draw when zoomed in below about 160 m per pixel.</li>
+<li>REMA pinned at any single level, so you can swipe 1 km against 100 m, or 2 m against 32 m.</li>
+</ul>
+
+<h3 id="globe">Globe</h3>
+<p><b>Globe</b> drapes the current view, styled as it is on the map, on the WGS84 ellipsoid with heights along the ellipsoid normal. Because REMA heights are ellipsoidal, exaggeration 1 is geometrically exact; the slider goes from 1x to about 300x. Drag to orbit, right-drag to pan, scroll to zoom. <b>Rebuild</b> rereads from the map view, <b>Continent</b> builds the whole ice sheet, <b>Pick view</b> takes you back to the map to frame something else. The texture is read at up to 3072 px across from whichever level matches, so a globe of one glacier comes from the fine levels and a globe of the continent from the 1 km file; the info line reports which level, how many files and what it cost.</p>
+
+<h2 id="design">Design</h2>
+<p>The page is a demonstration of one idea: a small descriptive file (a <i>recipe</i>) can make a dataset of thousands of files behave like one dataset at every scale, without copying or reprocessing the fine data. GDAL already does this. The explorer does the same thing in the browser, with no server, and keeps a ledger of what it costs.</p>
+
+<h3 id="official">The official streamable COGs</h3>
+<p>The Polar Geospatial Center publishes REMA v2 mosaics as Cloud Optimized GeoTIFFs in the <code>pgc-opendata-dems</code> bucket, organised as tiles:</p>
+<table>
+<tr><th>Product</th><th>Files</th><th>Each file</th></tr>
+<tr><td>2 m mosaic</td><td>5800 COGs</td><td>25100 x 25100 px, about 50 km, plus sibling <code>browse</code>, <code>count</code>, <code>mad</code>, <code>mindate</code>, <code>maxdate</code>, <code>datamask</code> and a <code>meta.txt</code></td></tr>
+<tr><td>10 m mosaic</td><td>1523 COGs</td><td>up to 10020 x 10020 px, 100 km</td></tr>
+<tr><td>32 m mosaic</td><td>1523 COGs</td><td>up to 3131 x 3131 px, 100 km</td></tr>
+<tr><td>100 m, 500 m, 1 km</td><td>whole continent</td><td>distributed in tarballs, slow to reach</td></tr>
+</table>
+<p>Each COG streams well <i>within itself</i>: it has internal overviews, so reading one 50 km tile at low resolution is cheap. But the internal overviews stop at the tile edge. A view of a 500 km glacier basin at 2 m-mosaic resolution touches hundreds of files, and a continent view touches all 5800, each needing at least a header read. There is no single file you can point a reader at and ask for "Antarctica at 1 km". This is the gap.</p>
+
+<h3 id="vrt">The overview VRT in this repo</h3>
+<p><code>REMA-2m_dem_ovr.vrt</code> is a GDAL Virtual Raster that mosaics all 5800 2 m COGs in place (by URL) and declares five <code>&lt;Overview&gt;</code> elements. When a read asks for fewer pixels than the 2 m grid, GDAL uses the overview whose resolution fits, exactly as it would use the internal overviews of a single file:</p>
+<svg viewBox="0 0 820 300" role="img" aria-label="Pyramid of six levels: 2m, 10m and 32m in the PGC bucket, 100m, 500m and 1km in this repository, all reached through one VRT">
+  <defs>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8d99a8"/></marker>
+  </defs>
+  <rect x="10" y="118" width="190" height="64" rx="8" fill="#151b23" stroke="#6cc4ff"/>
+  <text x="105" y="144" text-anchor="middle">REMA-2m_dem_ovr.vrt</text>
+  <text x="105" y="164" text-anchor="middle" class="m">one DSN, 3 MB of XML</text>
+  <g>
+    <rect x="300" y="20" width="230" height="36" rx="6" fill="#1b222c" stroke="#ffb86b"/>
+    <text x="315" y="43">1 km COG (+4 internal ovr)</text>
+    <rect x="300" y="64" width="230" height="36" rx="6" fill="#1b222c" stroke="#ffb86b"/>
+    <text x="315" y="87">500 m COG (+5 internal ovr)</text>
+    <rect x="300" y="108" width="230" height="36" rx="6" fill="#1b222c" stroke="#ffb86b"/>
+    <text x="315" y="131">100 m COG (Int16, sparse)</text>
+    <rect x="300" y="152" width="230" height="36" rx="6" fill="#1b222c" stroke="#5ad19a"/>
+    <text x="315" y="175">32 m VRT &rarr; 1523 COGs</text>
+    <rect x="300" y="196" width="230" height="36" rx="6" fill="#1b222c" stroke="#5ad19a"/>
+    <text x="315" y="219">10 m VRT &rarr; 1523 COGs</text>
+    <rect x="300" y="240" width="230" height="36" rx="6" fill="#1b222c" stroke="#5ad19a"/>
+    <text x="315" y="263">2 m sources &rarr; 5800 COGs</text>
+  </g>
+  <g stroke="#8d99a8" fill="none" marker-end="url(#ar)">
+    <path d="M200,150 C250,150 250,38 296,38"/><path d="M200,150 C250,150 250,82 296,82"/>
+    <path d="M200,150 C250,150 250,126 296,126"/><path d="M200,150 C250,150 250,170 296,170"/>
+    <path d="M200,150 C250,150 250,214 296,214"/><path d="M200,150 C250,150 250,258 296,258"/>
+  </g>
+  <text x="560" y="64" fill="#ffb86b">this repo (GitHub LFS for now)</text>
+  <text x="560" y="84" class="m">copied from PGC tarballs, or converted</text>
+  <text x="560" y="200" fill="#5ad19a">PGC bucket, untouched</text>
+  <text x="560" y="220" class="m">referenced by URL, never copied</text>
+</svg>
+<p>The payload in the repo is only the coarse end of the pyramid: the 500 m and 1 km mosaics copied out of the PGC tarballs, and a 100 m version converted to Int16 with sparse tiles and no internal overviews so it fits on GitHub. Everything from 32 m down stays where PGC publishes it. The 10 m and 32 m VRTs are PGC's own.</p>
+<pre>gdalwarp -te 2301786 490292 2302786 491292 -tr 2 2 \
+  /vsicurl/https://raw.githubusercontent.com/mdsumner/rema-ovr/main/REMA-2m_dem_ovr.vrt davis.tif
+gdalwarp -tr 1000 1000 \
+  /vsicurl/https://raw.githubusercontent.com/mdsumner/rema-ovr/main/REMA-2m_dem_ovr.vrt rema_1km.tif</pre>
+<p>Both commands read a bounded number of bytes, because the warper picks the level that matches the requested resolution.</p>
+
+<h3 id="browser">What the browser does</h3>
+<ol>
+<li><b>Reads the DSN.</b> It fetches the VRT, parses its sources and <code>&lt;Overview&gt;</code> list, follows the overview VRTs and opens the headers of the overview COGs. <code>/vsicurl/</code> and <code>/vsis3/</code> paths are turned into HTTPS URLs; <code>github.com/.../raw/...</code> becomes <code>raw.githubusercontent.com</code> (XML) or <code>media.githubusercontent.com</code> (LFS TIFFs), which allow cross-origin reads.</li>
+<li><b>Picks a level per screen tile.</b> The display grid is EPSG:3031 with 256 px tiles at 8192 / 2<sup>z</sup> m (z12 = 2 m), the same origin as GIBS polar tiles. For a tile at resolution R it takes the coarsest available level whose pixel is no larger than 1.5 R.</li>
+<li><b>Finds the files.</b> For VRT levels, a bucket index over the <code>DstRect</code> footprints gives the files that intersect the tile; there is a cap of 12 files per tile, which Auto should not reach.</li>
+<li><b>Picks an image inside each file</b> by the same rule (full resolution or internal overview), computes the pixel window, and asks geotiff.js for just those blocks. geotiff.js issues single-range HTTP requests, which browsers allow cross-origin without a preflight.</li>
+<li><b>Samples into the tile</b> with nearest neighbour, or bilinear when upsampling, using each file's own georeferencing, and renders colour and hillshade on the CPU from a 1 px gutter.</li>
+</ol>
+<p>Nothing is precomputed for the page: no tile cache, no server, no index other than the VRT itself. It is the same recipe GDAL reads.</p>
+
+<h2 id="findings">Findings worth knowing</h2>
+<h3>A continent costs megabytes, not gigabytes</h3>
+<p>A whole-continent view reads a few MB from the coarse internal overviews of the 1 km file; a 60 km coastal view reads about 1-2 MB of the 100 m file; a view at 2 m reads a few blocks of one or two 2 m COGs. The ledger in the side panel records requests, bytes and time for every settled view. The coarse overviews are Float32 with LZW compression, so they are larger than they need to be; an Int16 or better-compressed pyramid would make the cheap end cheaper.</p>
+
+<h3>GDAL ignores an overview's own georeferencing</h3>
+<p>GDAL treats an overview as covering exactly the extent of the base raster, scaled. The files here do not all share that extent:</p>
+<table>
+<tr><th>Level</th><th>Origin (x, y)</th><th>Size</th><th>Effect in GDAL</th></tr>
+<tr><td class="mono">2 m (base)</td><td class="mono">-2700100, 3342100</td><td class="mono">2725100 x 2921100</td><td>reference</td></tr>
+<tr><td class="mono">32 m VRT</td><td class="mono">-2700096, 3342080</td><td class="mono">170318 x 182568</td><td>up to about 20 m shift (0.6 px)</td></tr>
+<tr><td class="mono">100 m</td><td class="mono">-2700100, 3342100</td><td class="mono">54502 x 58422</td><td>exact</td></tr>
+<tr><td class="mono">500 m</td><td class="mono">-2700500, 3342500</td><td class="mono">10902 x 11686</td><td>up to about 400 m at the edges (0.8 px)</td></tr>
+<tr><td class="mono">1 km</td><td class="mono">-2701000, 3343000</td><td class="mono">5452 x 5844</td><td>up to about 900 m at the edges (0.9 px)</td></tr>
+</table>
+<p>The misregistration is sub-pixel at each level's own resolution, but it is real when you compare levels. The browser reader uses each file's own geotransform and does not have it. A fix on the GDAL side is to wrap the 500 m and 1 km files in VRTs whose extent matches the base grid.</p>
+
+<h3>The sibling products have no pyramid</h3>
+<p><code>count</code>, <code>mad</code>, <code>mindate</code> and <code>maxdate</code> exist only per tile, at 2 m, 10 m and 32 m. The explorer can show them when zoomed in, and refuses at coarse zoom because a continent view would mean touching every tile. That refusal is the argument for building overviews for them too.</p>
+
+<h3>Smaller things</h3>
+<ul>
+<li>The Int16 100 m overview shows 1 m terracing in hillshade over flat ice, especially at high exaggeration.</li>
+<li>The filled mosaics carry values over some ocean areas, visible in the Cop30 fill comparison.</li>
+<li><code>mindate</code>/<code>maxdate</code> are decoded as days since 2000-01-01; the strip dates in <code>meta.txt</code> on the Info panel are there to check that against.</li>
+<li>geotiff.js 2.1 has no ZSTD decoder and fails on sparse (zero-byte) tiles; the page adds both, because the unfilled 100 m file uses them.</li>
+<li>The PGC levels only work here if the <code>pgc-opendata-dems</code> bucket answers browsers with CORS headers. The page probes it at startup and falls back to the GitHub-hosted levels if not; the pyramid dots show which.</li>
+</ul>
+
+<h2 id="next">Next: bucket and index separation</h2>
+<p>GitHub is a stand-in. Git LFS counts every byte the explorer reads against the owner's bandwidth quota, and it is not meant for serving data. The design carries over unchanged to object storage: the coarse COGs move to a bucket, the VRT (the index, a few MB of text) stays wherever it is convenient to version it, and the browser and GDAL both keep reading the same recipe. The ledger is the measure of whether a change helps.</p>
+
+<p class="back"><a href="./">&larr; back to the explorer</a> &middot; <a href="https://github.com/mdsumner/rema-ovr">mdsumner/rema-ovr</a> &middot; REMA: Howat et al. 2019, Polar Geospatial Center</p>
+</main>
+</body>
+</html>

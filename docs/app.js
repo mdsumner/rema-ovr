@@ -287,7 +287,14 @@
 
   // ---------------------------------------------------------------- COGs
   const cogCache = new Map();
+  const cogReady = new Map();   // url -> opened cog, for synchronous overlay drawing
   const COG_LRU = 96;
+  // the image (full res or internal overview) a read at grid resolution R would use
+  function pickImage(cog, R) {
+    let L = cog.levels[0];
+    for (const l of cog.levels) if (l.rx <= R * 1.5 + 1e-9) L = l;
+    return L;
+  }
   function openCog(url) {
     let p = cogCache.get(url);
     if (p) { cogCache.delete(url); cogCache.set(url, p); return p; }
@@ -310,7 +317,7 @@
         bbox: [ox, oy - Math.abs(ry) * H, ox + rx * W, oy]
       };
     })();
-    p.catch(() => cogCache.delete(url));
+    p.then((c) => { cogReady.set(url, c); while (cogReady.size > 400) cogReady.delete(cogReady.keys().next().value); }, () => cogCache.delete(url));
     cogCache.set(url, p);
     while (cogCache.size > COG_LRU) cogCache.delete(cogCache.keys().next().value);
     return p;
@@ -323,8 +330,7 @@
     const bb = cog.bbox;
     const gx1 = g.x0 + g.W * g.res, gy1 = g.y0 - g.H * g.res;
     if (bb[0] >= gx1 || bb[2] <= g.x0 || bb[1] >= g.y0 || bb[3] <= gy1) return 0;
-    let L = cog.levels[0];
-    for (const l of cog.levels) if (l.rx <= g.res * 1.5 + 1e-9) L = l;
+    const L = pickImage(cog, g.res);
     const rx = L.rx, ry = L.ry;
     const u0 = (g.x0 + 0.5 * g.res - cog.ox) / rx, du = g.res / rx;
     const v0 = (cog.oy - (g.y0 - 0.5 * g.res)) / ry, dv = g.res / ry;
@@ -521,6 +527,20 @@
     return av.length ? av[0] : null;
   }
   function levelByName(n) { return levels.find((l) => l.name === n); }
+  // A pinned layer reads one level at its native pixel size at every zoom.
+  function pinnedLevel(L) {
+    if (!L || L.kind !== 'data') return null;
+    if (L.id === 'dem' && S.forceLevel !== 'auto') return levelByName(S.forceLevel) || null;
+    const m = L.id.match(/^dem@(.+)$/);
+    return m ? levelByName(m[1]) || null : null;
+  }
+  function nativeZ(res) { return clamp(Math.ceil(Math.log2(RES0 / res) - 1e-9), 0, 14); }
+  function layerZ(L) {
+    const p = pinnedLevel(L);
+    if (p) return nativeZ(p.res);
+    return Math.min(zForRes(S.res), L.zmax());
+  }
+  const MAX_VIEW_TILES = 900;
 
   // Read one level into grid g. suffix swaps _dem.tif for a sibling product.
   async function readLevel(level, g, out, suffix, opts) {
@@ -576,7 +596,8 @@
           if (!lv) lv = chooseLevel(g.res);
           if (!lv) throw new Error('no level available');
           const out = new Float32Array(g.W * g.H).fill(NaN);
-          const r = await readLevel(lv, g, out, null, opts);
+          const pinned = S.forceLevel !== 'auto' && lv.name === S.forceLevel;
+          const r = await readLevel(lv, g, out, null, pinned ? Object.assign({}, opts, { bilinear: false }) : opts);
           return { data: out, level: lv.name, files: r.files, n: r.n };
         }
       };
@@ -591,7 +612,7 @@
           const lv = levelByName(name);
           if (!lv || !levelAvailable(lv)) throw new Error('level ' + name + ' unavailable');
           const out = new Float32Array(g.W * g.H).fill(NaN);
-          const r = await readLevel(lv, g, out, null, opts);
+          const r = await readLevel(lv, g, out, null, Object.assign({}, opts, { bilinear: false }));
           return { data: out, level: lv.name, files: r.files, n: r.n };
         }
       };
@@ -696,7 +717,7 @@
     az: 315, alt: 40, exag: 0, mix: 0.65, contours: false, cint: null,
     forceLevel: 'auto', bilinear: true,
     cmp: 'none', cmpMode: 'swipe', cmpOpacity: 1, cmpDate: '2025-12-15', swipe: 0.5,
-    grat: true, foot: false, tiles: false,
+    grat: true, bnd: 'none', bndLevel: 'lod',
     tool: 'info'
   };
   let viewCdf = null;   // for equalise stretch
@@ -726,9 +747,9 @@
     return (v) => clamp((v - vmin) / span, 0, 1);
   }
 
-  function renderTileImage(data, R, style, img) {
-    const px = img.data;
-    const W = TW;
+  // data is (OW + 2G) x (OH + 2G); px is an RGBA buffer OW x OH
+  function renderImage(data, OW, OH, G, R, style, px) {
+    const W = OW + 2 * G;
     let palette, vmin, vmax, stretch;
     if (style === 'dem') { palette = S.palette; vmin = S.vmin; vmax = S.vmax; stretch = S.stretch; }
     else if (style === 'diff') { palette = 'rdbu'; vmin = -5; vmax = 5; stretch = 'linear'; }
@@ -745,11 +766,11 @@
     const doCont = S.contours && (style === 'dem');
     const ci = doCont ? (S.cint || niceStep(Math.max(1, (S.vmax - S.vmin) / 16))) : 0;
     const AL = lut('aspect'), ML = lut('magma');
-    for (let j = 0; j < TS; j++) {
-      for (let i = 0; i < TS; i++) {
-        const k = (j + GUT) * W + (i + GUT);
+    for (let j = 0; j < OH; j++) {
+      for (let i = 0; i < OW; i++) {
+        const k = (j + G) * W + (i + G);
         const v = data[k];
-        const o = (j * TS + i) * 4;
+        const o = (j * OW + i) * 4;
         if (v !== v) { px[o + 3] = 0; continue; }
         let r, g, b;
         if (style === 'diff') {
@@ -912,7 +933,7 @@
     }
     const c = e.canvas.getContext('2d');
     const img = c.createImageData(TS, TS);
-    renderTileImage(e.data, tileRes(e.z), style, img);
+    renderImage(e.data, TS, TS, GUT, tileRes(e.z), style, img.data);
     c.putImageData(img, 0, 0);
     e.skey = sk;
     return e.canvas;
@@ -962,7 +983,8 @@
     const isImage = L.kind === 'image';
     let z;
     if (isImage) z = clamp(Math.ceil(Math.log2(RES0 / S.res) - 0.25), 0, L.maxZ);
-    else z = Math.min(zForRes(S.res), L.zmax());
+    else z = layerZ(L);
+    const pin = pinnedLevel(L);
     if (L.maxRes && S.res > L.maxRes * 1.5) {
       frameInfo.cmpMsg = (L.style && L.style.startsWith('sib') ? SIB[L.style.slice(4)].label : layerId) + ': zoom in (needs < ' + L.maxRes + ' m/px)';
       return;
@@ -974,13 +996,17 @@
     const x0 = Math.max(0, Math.floor((bb[0] + ORIGIN) / span)), x1 = Math.min(ntiles - 1, Math.floor((bb[2] + ORIGIN) / span));
     const y0 = Math.max(0, Math.floor((ORIGIN - bb[3]) / span)), y1 = Math.min(ntiles - 1, Math.floor((ORIGIN - bb[1]) / span));
     const cxT = (S.x + ORIGIN) / span, cyT = (ORIGIN - S.y) / span;
+    if (pin && (x1 - x0 + 1) * (y1 - y0 + 1) > MAX_VIEW_TILES) {
+      frameInfo.pinMsg = 'Pinned at ' + pin.name + ': this view needs ' + ((x1 - x0 + 1) * (y1 - y0 + 1)) + ' tiles of native pixels (limit ' + MAX_VIEW_TILES + '). Zoom in, or unpin.';
+      return;
+    }
     ctx.save();
     if (clipX !== undefined) {
       ctx.beginPath(); ctx.rect(clipX * DPR, 0, canvas.width - clipX * DPR, canvas.height); ctx.clip();
     }
     if (isImage) ctx.globalAlpha = S.cmp === layerId ? (S.cmpMode === 'overlay' ? S.cmpOpacity : 1) : 1;
     else if (layerId !== 'dem' && S.cmpMode === 'overlay') ctx.globalAlpha = S.cmpOpacity;
-    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingEnabled = !pin;
     for (let ty = y0; ty <= y1; ty++) {
       for (let tx = x0; tx <= x1; tx++) {
         const prio = prioBase + Math.hypot(tx + 0.5 - cxT, ty + 0.5 - cyT);
@@ -1014,24 +1040,11 @@
       }
     }
     ctx.restore();
-    if (S.tiles && layerId === 'dem') {
-      ctx.save();
-      ctx.strokeStyle = 'rgba(255,255,0,.35)'; ctx.lineWidth = 1;
-      ctx.fillStyle = 'rgba(255,255,0,.7)'; ctx.font = (10 * DPR) + 'px monospace';
-      for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) {
-        const X0 = -ORIGIN + tx * span, Y0 = ORIGIN - ty * span;
-        ctx.strokeRect(sx(X0) * DPR, sy(Y0) * DPR, span / S.res * DPR, span / S.res * DPR);
-        const e = store.get(tileKey(layerId, z, tx, ty));
-        const lab = z + '/' + tx + '/' + ty + (e && e.meta ? ' ' + e.meta.level + ' ' + e.meta.n + 'f ' + e.meta.ms.toFixed(0) + 'ms' : '');
-        ctx.fillText(lab, sx(X0) * DPR + 4, sy(Y0) * DPR + 12 * DPR);
-      }
-      ctx.restore();
-    }
   }
 
   function draw() {
     queueGen++;
-    frameInfo = { levels: new Map(), errors: [], tooMany: false, cmpMsg: '' };
+    frameInfo = { levels: new Map(), errors: [], tooMany: false, cmpMsg: '', pinMsg: '' };
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#0a1a2a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1054,7 +1067,8 @@
     currentLevels = lv;
     renderPyramidActive();
     let msg = '';
-    if (frameInfo.tooMany) msg = frameInfo.tooMany + '. Zoom in, or set Level to Auto.';
+    if (frameInfo.pinMsg) msg = frameInfo.pinMsg;
+    else if (frameInfo.tooMany) msg = frameInfo.tooMany + '. Zoom in, or set Level to Auto.';
     else if (frameInfo.cmpMsg) msg = frameInfo.cmpMsg;
     if (msg !== mapMsgShown) {
       mapMsgShown = msg;
@@ -1140,29 +1154,111 @@
     ctx.restore();
   }
 
-  function drawFootprints() {
-    const lv = levelByName(currentLevels[0]) || chooseLevel(tileRes(zForRes(S.res)));
-    if (!lv) return;
+  // Which level the boundary overlay describes, and at what read resolution.
+  function boundaryTarget() {
+    const dem = getLayer('dem');
+    if (S.bndLevel !== 'lod') {
+      const lv = levelByName(S.bndLevel);
+      return lv ? { lv, z: nativeZ(lv.res), R: lv.res, fixed: true } : null;
+    }
+    const z = layerZ(dem);
+    const pin = pinnedLevel(dem);
+    const lv = pin || levelByName(currentLevels[0]) || chooseLevel(tileRes(z));
+    return lv ? { lv, z, R: tileRes(z), fixed: false } : null;
+  }
+  function strokeBox(b, dash) {
+    ctx.setLineDash(dash || []);
+    ctx.strokeRect(sx(b[0]) * DPR, sy(b[3]) * DPR, (b[2] - b[0]) / S.res * DPR, (b[3] - b[1]) / S.res * DPR);
+    ctx.setLineDash([]);
+  }
+  function drawBoundaries() {
+    const t = boundaryTarget();
+    if (!t) return;
+    const bb = viewBbox();
     ctx.save();
     ctx.lineWidth = 1 * DPR;
-    ctx.strokeStyle = 'rgba(255,184,107,.8)';
-    ctx.fillStyle = 'rgba(255,184,107,.9)';
     ctx.font = (10 * DPR) + 'px monospace';
-    if (lv.kind === 'tif') {
-      const e = lv.extent;
-      if (e) ctx.strokeRect(sx(e[0]) * DPR, sy(e[3]) * DPR, (e[2] - e[0]) / S.res * DPR, (e[3] - e[1]) / S.res * DPR);
-      ctx.restore(); return;
-    }
-    if (!lv.index) { ctx.restore(); return; }
-    const ids = lv.index.query(viewBbox());
-    if (ids.length > 4000) { ctx.restore(); return; }
-    for (const i of ids) {
-      const b = lv.sources[i].bbox;
-      const X = sx(b[0]) * DPR, Y = sy(b[3]) * DPR, Wd = (b[2] - b[0]) / S.res * DPR, Hd = (b[3] - b[1]) / S.res * DPR;
-      ctx.strokeRect(X, Y, Wd, Hd);
-      if (ids.length < 80 && Wd > 90 * DPR) ctx.fillText(shortName(lv.sources[i].url).replace(/_dem\.tif$/, ''), X + 4 * DPR, Y + 12 * DPR);
+    let note = '';
+    if (S.bnd === 'display') {
+      const span = TS * tileRes(t.z);
+      const x0 = Math.floor((bb[0] + ORIGIN) / span), x1 = Math.floor((bb[2] + ORIGIN) / span);
+      const y0 = Math.floor((ORIGIN - bb[3]) / span), y1 = Math.floor((ORIGIN - bb[1]) / span);
+      const n = (x1 - x0 + 1) * (y1 - y0 + 1);
+      if (n > 3000) note = 'display tiles z' + t.z + ': ' + n + ' in view, too many to draw';
+      else {
+        ctx.strokeStyle = 'rgba(255,255,0,.45)'; ctx.fillStyle = 'rgba(255,255,0,.8)';
+        const big = span / S.res > 110;
+        for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) {
+          const X0 = -ORIGIN + tx * span, Y0 = ORIGIN - ty * span;
+          strokeBox([X0, Y0 - span, X0 + span, Y0]);
+          if (!big) continue;
+          const e = store.get(tileKey('dem', t.z, tx, ty));
+          ctx.fillText(t.z + '/' + tx + '/' + ty, sx(X0) * DPR + 4 * DPR, sy(Y0) * DPR + 12 * DPR);
+          if (e && e.meta) ctx.fillText(e.meta.level + ' ' + e.meta.n + 'f ' + e.meta.ms.toFixed(0) + 'ms', sx(X0) * DPR + 4 * DPR, sy(Y0) * DPR + 24 * DPR);
+        }
+        note = 'display tiles z' + t.z + ' (' + fmtRes(tileRes(t.z)) + ' px)' + (t.fixed ? ', fixed at ' + t.lv.name : ', following LOD');
+      }
+    } else {
+      // files, or internal COG blocks
+      const lv = t.lv;
+      let urls = [];
+      if (lv.kind === 'tif') urls = [{ url: lv.url, bbox: lv.extent }];
+      else if (lv.index) {
+        const ids = lv.index.query(bb);
+        if (ids.length > 4000) { note = lv.name + ': ' + ids.length + ' files in view, too many to draw'; ids.length = 0; }
+        urls = ids.map((i) => lv.sources[i]);
+      } else ensureSources(lv).then(scheduleDraw, () => {});
+      ctx.strokeStyle = 'rgba(255,184,107,.9)'; ctx.fillStyle = 'rgba(255,184,107,.95)';
+      const labels = urls.length < 80;
+      for (const sitem of urls) {
+        if (!sitem.bbox) continue;
+        strokeBox(sitem.bbox);
+        const Wd = (sitem.bbox[2] - sitem.bbox[0]) / S.res;
+        if (labels && Wd > 90) ctx.fillText(shortName(sitem.url).replace(/_dem\.tif$/, ''), sx(sitem.bbox[0]) * DPR + 4 * DPR, sy(sitem.bbox[3]) * DPR + 12 * DPR);
+      }
+      if (S.bnd === 'files') note = lv.name + ': ' + urls.length + ' file' + (urls.length === 1 ? '' : 's') + ' in view' + (t.fixed ? ' (fixed)' : ' (following LOD)');
+      if (S.bnd === 'blocks') {
+        let drawn = 0, pending = 0, small = 0, desc = new Set();
+        ctx.strokeStyle = 'rgba(108,196,255,.9)'; ctx.lineWidth = 1.5 * DPR;
+        for (const sitem of urls.slice(0, 120)) {
+          if (!levelAvailable(lv)) break;
+          const cog = cogReady.get(sitem.url);
+          if (!cog) { pending++; openCog(sitem.url).then(scheduleDraw, () => {}); continue; }
+          const L = pickImage(cog, t.R);
+          const tw = L.im.getTileWidth(), th = L.im.getTileHeight();
+          const bw = tw * L.rx, bh = th * L.ry;
+          if (bw / S.res < 5) { small++; continue; }
+          const k = cog.levels.indexOf(L);
+          desc.add((k ? 'overview ' + k : 'full res') + ', ' + tw + 'px blocks of ' + fmtRes(L.rx));
+          const c0 = Math.max(0, Math.floor((bb[0] - cog.ox) / bw)), c1 = Math.min(Math.ceil(L.w / tw) - 1, Math.floor((bb[2] - cog.ox) / bw));
+          const r0 = Math.max(0, Math.floor((cog.oy - bb[3]) / bh)), r1 = Math.min(Math.ceil(L.h / th) - 1, Math.floor((cog.oy - bb[1]) / bh));
+          if ((c1 - c0 + 1) * (r1 - r0 + 1) > 6000) { small++; continue; }
+          ctx.beginPath();
+          for (let c = c0; c <= c1 + 1; c++) {
+            const X = sx(cog.ox + Math.min(c * bw, L.w * L.rx)) * DPR;
+            ctx.moveTo(X, sy(cog.oy - r0 * bh) * DPR); ctx.lineTo(X, sy(cog.oy - Math.min((r1 + 1) * bh, L.h * L.ry)) * DPR);
+          }
+          for (let r = r0; r <= r1 + 1; r++) {
+            const Y = sy(cog.oy - Math.min(r * bh, L.h * L.ry)) * DPR;
+            ctx.moveTo(sx(cog.ox + c0 * bw) * DPR, Y); ctx.lineTo(sx(cog.ox + Math.min((c1 + 1) * bw, L.w * L.rx)) * DPR, Y);
+          }
+          ctx.stroke();
+          drawn++;
+        }
+        note = lv.name + ' COG blocks: ' + Array.from(desc).join('; ') + (pending ? ' | opening ' + pending + ' headers' : '') + (small ? ' | ' + small + ' file(s) too fine to draw here' : '') + (t.fixed ? ' (fixed)' : ' (following LOD)');
+      }
     }
     ctx.restore();
+    if (note) {
+      ctx.save();
+      ctx.font = (11 * DPR) + 'px monospace';
+      const w = ctx.measureText(note).width + 12 * DPR;
+      ctx.fillStyle = 'rgba(15,20,27,.85)';
+      ctx.fillRect(10 * DPR, (CH - 62) * DPR, w, 18 * DPR);
+      ctx.fillStyle = '#e3e8ee';
+      ctx.fillText(note, 16 * DPR, (CH - 49) * DPR);
+      ctx.restore();
+    }
   }
 
   function drawToolGeometry() {
@@ -1204,7 +1300,7 @@
   function drawOverlays() {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     if (S.grat) drawGraticule();
-    if (S.foot) drawFootprints();
+    if (S.bnd !== 'none') drawBoundaries();
     drawToolGeometry();
   }
 
@@ -1287,14 +1383,42 @@
     renderPyramidActive();
   }
   function renderPyramidActive() {
-    for (const d of $('pyramid').children) d.classList.toggle('active', currentLevels.includes(d.dataset.name));
+    for (const d of $('pyramid').children) {
+      d.classList.toggle('active', currentLevels.includes(d.dataset.name));
+      d.classList.toggle('pinned', d.dataset.name === S.forceLevel);
+      if (!d.onclick) d.onclick = () => setPin(S.forceLevel === d.dataset.name ? 'auto' : d.dataset.name);
+    }
   }
   function fillLevelSelect() {
     const sel = $('forceLevel');
     const cur = S.forceLevel;
     sel.innerHTML = '<option value="auto">Auto (like the warper)</option>' + levels.map((l) =>
-      '<option value="' + escapeHtml(l.name) + '"' + (levelAvailable(l) ? '' : ' disabled') + '>' + escapeHtml(l.name) + ' only</option>').join('');
+      '<option value="' + escapeHtml(l.name) + '"' + (levelAvailable(l) ? '' : ' disabled') + '>Pin ' + escapeHtml(l.name) + '</option>').join('');
     sel.value = levels.some((l) => l.name === cur) ? cur : 'auto';
+    const bl = $('bndLevel');
+    const bcur = S.bndLevel;
+    bl.innerHTML = '<option value="lod">Follow LOD</option>' + levels.map((l) =>
+      '<option value="' + escapeHtml(l.name) + '">Fixed ' + escapeHtml(l.name) + '</option>').join('');
+    bl.value = levels.some((l) => l.name === bcur) ? bcur : 'lod';
+    updatePinUi();
+  }
+  function setPin(name) {
+    const lv = name !== 'auto' ? levelByName(name) : null;
+    if (lv && !levelAvailable(lv)) { flash(name + ' is not reachable from this page'); return; }
+    S.forceLevel = lv ? name : 'auto';
+    $('forceLevel').value = S.forceLevel;
+    for (const k of Array.from(store.keys())) if (k.startsWith('dem/')) store.delete(k);
+    updatePinUi();
+    ledgerMark(); updateLegend(); scheduleDraw(); writeHash();
+  }
+  function updatePinUi() {
+    const b = $('pinBtn');
+    if (!b) return;
+    const on = S.forceLevel !== 'auto';
+    b.classList.toggle('on', on);
+    b.textContent = on ? 'Pinned ' + S.forceLevel : 'Pin level';
+    b.title = on ? 'Unpin: go back to automatic level choice' : 'Pin the level currently on screen so it no longer switches with zoom';
+    for (const d of $('pyramid').children) d.classList.toggle('pinned', d.dataset.name === S.forceLevel);
   }
   function fillCompareSelect() {
     const sel = $('cmpLayer');
@@ -1338,7 +1462,7 @@
 
   // ---------------------------------------------------------------- view stats
   function computeViewStats() {
-    const z = Math.min(zForRes(S.res), getLayer('dem').zmax());
+    const z = layerZ(getLayer('dem'));
     const span = TS * tileRes(z);
     const bb = viewBbox();
     const vals = [];
@@ -1513,7 +1637,7 @@
 
   function readoutIdle() { return 'move over the map'; }
   function sampleViewDem(X, Y) {
-    const z = Math.min(zForRes(S.res), getLayer('dem').zmax());
+    const z = layerZ(getLayer('dem'));
     const R = tileRes(z), span = TS * R;
     const tx = Math.floor((X + ORIGIN) / span), ty = Math.floor((ORIGIN - Y) / span);
     const e = store.get(tileKey('dem', z, tx, ty));
@@ -1529,11 +1653,22 @@
     const s = sampleViewDem(X, Y);
     const k = scaleK(ll[1]);
     let src = '';
-    if (S.foot) {
-      const lv = levelByName(currentLevels[0]);
+    if (S.bnd === 'files' || S.bnd === 'blocks') {
+      const t = boundaryTarget();
+      const lv = t && t.lv;
+      let url = null;
       if (lv && lv.index) {
         const ids = lv.index.query([X, Y, X, Y]);
-        if (ids.length) src = '\nsrc  ' + shortName(lv.sources[ids[ids.length - 1]].url);
+        if (ids.length) url = lv.sources[ids[ids.length - 1]].url;
+      } else if (lv && lv.kind === 'tif') url = lv.url;
+      if (url) {
+        src = '\nsrc  ' + shortName(url);
+        const cog = cogReady.get(url);
+        if (cog && S.bnd === 'blocks') {
+          const L = pickImage(cog, t.R);
+          const c = Math.floor((X - cog.ox) / (L.im.getTileWidth() * L.rx)), r = Math.floor((cog.oy - Y) / (L.im.getTileHeight() * L.ry));
+          src += '\nblk  ovr ' + cog.levels.indexOf(L) + ' col ' + c + ' row ' + r;
+        }
       }
     }
     $('readout').textContent =
@@ -1997,6 +2132,7 @@
     if (S.cmp !== 'none') { q.set('cmp', S.cmp); q.set('cm', S.cmpMode); }
     if (S.cmp !== 'none' && GIBS[S.cmp] && GIBS[S.cmp].time) q.set('date', S.cmpDate);
     if (S.contours) q.set('cont', 1);
+    if (S.bnd !== 'none') { q.set('bnd', S.bnd); if (S.bndLevel !== 'lod') q.set('bl', S.bndLevel); }
     if (dsnString && dsnString !== DEFAULT_DSN) q.set('dsn', dsnString);
     history.replaceState(null, '', '#' + q.toString());
   }
@@ -2016,6 +2152,8 @@
     if (q.get('cm')) S.cmpMode = q.get('cm');
     if (q.get('date')) S.cmpDate = q.get('date');
     if (q.get('cont')) S.contours = true;
+    if (q.get('bnd')) S.bnd = q.get('bnd');
+    if (q.get('bl')) S.bndLevel = q.get('bl');
     return q.get('dsn') || DEFAULT_DSN;
   }
 
@@ -2051,15 +2189,20 @@
     set('mix', 'mix', Number);
     set('contours', 'contours');
     set('cint', 'cint', (v) => (+v > 0 ? +v : null));
-    set('forceLevel', 'forceLevel', null, () => { for (const k of Array.from(store.keys())) if (k.startsWith('dem/')) store.delete(k); ledgerMark(); });
+    $('forceLevel').addEventListener('change', () => setPin($('forceLevel').value));
+    $('pinBtn').onclick = () => {
+      if (S.forceLevel !== 'auto') setPin('auto');
+      else if (currentLevels[0]) setPin(currentLevels[0]);
+      else flash('Nothing on screen to pin yet');
+    };
     set('bilinear', 'bilinear', null, () => { store.clear(); });
     set('cmpLayer', 'cmp', null, () => { updateCompareUi(); ledgerMark(); });
     set('cmpMode', 'cmpMode');
     set('cmpOpacity', 'cmpOpacity', Number);
     set('cmpDate', 'cmpDate', null, () => ledgerMark());
     set('ovGrat', 'grat');
-    set('ovFoot', 'foot');
-    set('ovTiles', 'tiles');
+    set('bnd', 'bnd');
+    set('bndLevel', 'bndLevel');
     $('autoRange').onclick = () => {
       computeViewStats();
       if (viewStats) setRange(viewStats.p2, viewStats.p98); else flash('Nothing on screen yet');
@@ -2092,9 +2235,201 @@
     writeHash();
   }
 
+  // ---------------------------------------------------------------- globe
+  // Drapes the styled DEM of the current view (or the whole continent) on the
+  // WGS84 ellipsoid with heights along the ellipsoid normal (REMA heights are
+  // ellipsoidal, so this is exact at exaggeration 1). Vertices are relative to
+  // the mesh centre to keep float32 precision.
+  const WGS_A = 6378137, WGS_B = 6356752.314245, WGS_E2 = 1 - (WGS_B * WGS_B) / (WGS_A * WGS_A);
+  function ecef3(lon, lat, h) {
+    const p = lat * DEG, l = lon * DEG;
+    const N = WGS_A / Math.sqrt(1 - WGS_E2 * Math.sin(p) ** 2);
+    const X = (N + h) * Math.cos(p) * Math.cos(l), Y = (N + h) * Math.cos(p) * Math.sin(l), Z = (N * (1 - WGS_E2) + h) * Math.sin(p);
+    return [X, Z, -Y]; // three.js: y up = polar axis
+  }
+  let G3 = null;
+  function globeExag() { return Math.pow(10, +$('gExag').value / 40); }
+
+  async function initGlobe() {
+    let THREE, OrbitControls;
+    try {
+      THREE = await import('three');
+      ({ OrbitControls } = await import('three/addons/controls/OrbitControls.js'));
+    } catch (e) { throw new Error('could not load three.js: ' + (e.message || e)); }
+    const cv = $('globeCanvas');
+    const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, logarithmicDepthBuffer: true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x05080d);
+    const camera = new THREE.PerspectiveCamera(40, 1, 1, 1e9);
+    const controls = new OrbitControls(camera, cv);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.12;
+    scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+    scene.add(sun); scene.add(sun.target);
+    const world = new THREE.Group();
+    scene.add(world);
+    const sph = new THREE.Mesh(new THREE.SphereGeometry(1, 180, 90), new THREE.MeshLambertMaterial({ color: 0x14324d }));
+    sph.scale.set(WGS_A - 400, WGS_B - 400, WGS_A - 400);
+    world.add(sph);
+    // graticule on the ellipsoid
+    const gp = [];
+    const seg = (pts) => { for (let i = 1; i < pts.length; i++) gp.push(...pts[i - 1], ...pts[i]); };
+    for (let lat = -85; lat <= 85; lat += 5) {
+      if (lat > -50 && lat % 15) continue;
+      const pts = []; for (let lon = -180; lon <= 180; lon += 2) pts.push(ecef3(lon, lat, 300)); seg(pts);
+    }
+    for (let lon = -180; lon < 180; lon += 15) {
+      const pts = []; for (let lat = -90; lat <= 90; lat += 1) pts.push(ecef3(lon, lat, 300)); seg(pts);
+    }
+    const gg = new THREE.BufferGeometry();
+    gg.setAttribute('position', new THREE.Float32BufferAttribute(gp, 3));
+    const grat = new THREE.LineSegments(gg, new THREE.LineBasicMaterial({ color: 0x8aa0b4, transparent: true, opacity: 0.35 }));
+    world.add(grat);
+    G3 = { THREE, renderer, scene, camera, controls, sun, world, grat, sph, mesh: null, running: false };
+    const ro = new ResizeObserver(() => globeResize());
+    ro.observe($('globeWrap'));
+    globeResize();
+  }
+  function globeResize() {
+    if (!G3) return;
+    const r = $('globeWrap').getBoundingClientRect();
+    G3.renderer.setSize(r.width, r.height, false);
+    G3.camera.aspect = r.width / Math.max(1, r.height);
+    G3.camera.updateProjectionMatrix();
+  }
+  function globeLoop() {
+    if (!G3 || $('globeWrap').hidden) { if (G3) G3.running = false; return; }
+    G3.running = true;
+    G3.controls.update();
+    // headlight from a little above the camera
+    G3.sun.position.copy(G3.camera.position).add(G3.camera.up.clone().multiplyScalar(G3.camera.position.length() * 0.6));
+    G3.sun.target.position.copy(G3.controls.target);
+    G3.renderer.render(G3.scene, G3.camera);
+    requestAnimationFrame(globeLoop);
+  }
+
+  async function buildGlobe(which) {
+    const info = $('gInfo');
+    const bb = which === 'continent' ? [-2700000, -2500000, 2750000, 3342000] : viewBbox();
+    const T = +$('gTex').value, M = +$('gMesh').value;
+    const w = bb[2] - bb[0], h = bb[3] - bb[1];
+    const R = Math.max(w, h) / T;
+    const nx = Math.max(8, Math.round(w / R)), ny = Math.max(8, Math.round(h / R));
+    const g = { x0: bb[0] - R, y0: bb[3] + R, res: R, W: nx + 2, H: ny + 2 };
+    info.textContent = 'reading ' + nx + ' x ' + ny + ' at ' + fmtRes(R) + ' ...';
+    const req0 = ledger.req, b0 = ledger.bytes, t0 = performance.now();
+    let r;
+    try { r = await getLayer('dem').load(g, { bilinear: S.bilinear }); }
+    catch (e) { info.textContent = 'read failed: ' + (e.message || e); return; }
+    const data = r.data;
+    // texture: the current 2D style
+    const tc = document.createElement('canvas');
+    tc.width = nx; tc.height = ny;
+    const tctx = tc.getContext('2d');
+    const img = tctx.createImageData(nx, ny);
+    renderImage(data, nx, ny, 1, R, 'dem', img.data);
+    tctx.putImageData(img, 0, 0);
+    // mesh heights
+    const mx = M, my = Math.max(2, Math.round(M * ny / nx));
+    const hts = new Float32Array(mx * my), xy = new Float64Array(mx * my * 2);
+    const W2 = nx + 2;
+    for (let j = 0; j < my; j++) for (let i = 0; i < mx; i++) {
+      const X = bb[0] + (i / (mx - 1)) * w, Y = bb[3] - (j / (my - 1)) * h;
+      const c = clamp(Math.floor((X - g.x0) / R), 0, nx + 1), rr = clamp(Math.floor((g.y0 - Y) / R), 0, ny + 1);
+      hts[j * mx + i] = data[rr * W2 + c];
+      xy[(j * mx + i) * 2] = X; xy[(j * mx + i) * 2 + 1] = Y;
+    }
+    const idx = [];
+    for (let j = 0; j < my - 1; j++) for (let i = 0; i < mx - 1; i++) {
+      const a = j * mx + i, b = a + 1, c = a + mx, d = c + 1;
+      if (hts[a] !== hts[a] || hts[b] !== hts[b] || hts[c] !== hts[c] || hts[d] !== hts[d]) continue;
+      idx.push(a, c, b, b, c, d);
+    }
+    const { THREE } = G3;
+    const cll = toLL((bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2);
+    const origin = ecef3(cll[0], cll[1], 0);
+    const uv = new Float32Array(mx * my * 2);
+    for (let j = 0; j < my; j++) for (let i = 0; i < mx; i++) { uv[(j * mx + i) * 2] = i / (mx - 1); uv[(j * mx + i) * 2 + 1] = 1 - j / (my - 1); }
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(mx * my * 3), 3));
+    geom.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geom.setIndex(idx);
+    const tex = new THREE.CanvasTexture(tc);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    const mat = new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide });
+    if (G3.mesh) { G3.world.parent.remove(G3.mesh); G3.mesh.geometry.dispose(); G3.mesh.material.map.dispose(); G3.mesh.material.dispose(); }
+    const mesh = new THREE.Mesh(geom, mat);
+    G3.scene.add(mesh);
+    G3.mesh = mesh;
+    G3.grid = { hts, xy, mx, my, origin, w, h, bb };
+    G3.world.position.set(-origin[0], -origin[1], -origin[2]);
+    setGlobeHeights();
+    // camera: above the centre, tilted to look from the "bottom" of the map view
+    const up = new THREE.Vector3(...origin).normalize();
+    const llb = toLL((bb[0] + bb[2]) / 2, bb[1]);
+    const pb = ecef3(llb[0], llb[1], 0);
+    const down = new THREE.Vector3(pb[0] - origin[0], pb[1] - origin[1], pb[2] - origin[2]).normalize();
+    const D = Math.max(w, h) * 1.15;
+    G3.camera.up.copy(up);
+    G3.camera.position.copy(up.clone().multiplyScalar(D * 0.8).add(down.clone().multiplyScalar(D * 0.75)));
+    G3.camera.near = Math.max(1, D / 5000);
+    G3.camera.updateProjectionMatrix();
+    G3.controls.target.set(0, 0, 0);
+    G3.controls.minDistance = Math.max(50, D / 200);
+    G3.controls.maxDistance = 4e7;
+    G3.controls.update();
+    info.textContent = nx + ' x ' + ny + ' texture at ' + fmtRes(R) + ' from level ' + r.level + ' (' + r.n + ' file' + (r.n === 1 ? '' : 's') + '), ' + mx + ' x ' + my + ' mesh | ' +
+      (ledger.req - req0) + ' req, ' + fmtBytes(ledger.bytes - b0) + ', ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s';
+    if (!G3.running) globeLoop();
+  }
+  function setGlobeHeights() {
+    if (!G3 || !G3.grid) return;
+    const { hts, xy, mx, my, origin } = G3.grid;
+    const ex = globeExag();
+    $('gExagLab').textContent = ex.toFixed(ex < 10 ? 1 : 0) + 'x';
+    const pos = G3.mesh.geometry.attributes.position.array;
+    for (let k = 0; k < mx * my; k++) {
+      const ll = toLL(xy[k * 2], xy[k * 2 + 1]);
+      const hv = hts[k];
+      const p = ecef3(ll[0], ll[1], (hv === hv ? hv : 0) * ex);
+      pos[k * 3] = p[0] - origin[0]; pos[k * 3 + 1] = p[1] - origin[1]; pos[k * 3 + 2] = p[2] - origin[2];
+    }
+    // keep the base ellipsoid under the lowest (geoid-negative) sea surface at this exaggeration
+    const drop = 120 + 90 * ex;
+    G3.sph.scale.set(WGS_A - drop, WGS_B - drop, WGS_A - drop);
+    G3.mesh.geometry.attributes.position.needsUpdate = true;
+    G3.mesh.geometry.computeVertexNormals();
+    G3.mesh.geometry.computeBoundingSphere();
+  }
+  async function openGlobe(which) {
+    $('globeWrap').hidden = false;
+    $('globeBtn').classList.add('on');
+    try {
+      if (!G3) { $('gInfo').textContent = 'loading three.js ...'; await initGlobe(); }
+      await buildGlobe(which);
+    } catch (e) { $('gInfo').textContent = String(e.message || e); }
+  }
+  function closeGlobe() {
+    $('globeWrap').hidden = true;
+    $('globeBtn').classList.remove('on');
+  }
+  function bindGlobe() {
+    $('globeBtn').onclick = () => ($('globeWrap').hidden ? openGlobe('view') : closeGlobe());
+    $('gClose').onclick = closeGlobe;
+    $('gView').onclick = () => { closeGlobe(); flash('Frame the view you want, then press Globe again', 2500); };
+    $('gRebuild').onclick = () => buildGlobe('view');
+    $('gCont').onclick = () => buildGlobe('continent');
+    $('gExag').addEventListener('input', setGlobeHeights);
+    $('gExag').addEventListener('change', setGlobeHeights);
+  }
+
   // ---------------------------------------------------------------- go
   const initialDsn = readHash();
   bindControls();
+  bindGlobe();
   resize();
   if (!location.hash) S.res = Math.max(5.6e6 / CW, 5.0e6 / CH);
   updateLegend();

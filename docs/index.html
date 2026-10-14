@@ -13,7 +13,7 @@
     <header class="brand">
       <div>
         <h1>REMA explorer</h1>
-        <p class="sub">One DSN, six levels, read live from COGs in the browser</p>
+        <p class="sub">One DSN, six levels, read live from COGs in the browser. <a href="about.html#guide" target="_blank" rel="noopener">Guide</a> &middot; <a href="about.html#design" target="_blank" rel="noopener">How it works</a></p>
       </div>
       <button id="sideToggle" class="icon" title="Hide panel" aria-label="Hide panel">&laquo;</button>
     </header>
@@ -91,7 +91,7 @@
         </label>
         <label class="check"><input id="bilinear" type="checkbox" checked> Bilinear when upsampling</label>
       </div>
-      <p class="hint">Auto picks the coarsest level whose pixel is no bigger than 1.5 screen pixels, then the best internal overview inside each COG.</p>
+      <p class="hint">Auto picks the coarsest level whose pixel is no bigger than 1.5 screen pixels, then the best internal overview inside each COG. Pinning reads one level at its native pixel size at every zoom (nearest neighbour, so you see its real pixels); click a row in the pyramid to pin or unpin it.</p>
     </section>
 
     <section class="card">
@@ -120,9 +120,20 @@
       <h2>Overlays</h2>
       <div class="grid2">
         <label class="check"><input id="ovGrat" type="checkbox" checked> Graticule</label>
-        <label class="check"><input id="ovFoot" type="checkbox"> Source tiles</label>
-        <label class="check"><input id="ovTiles" type="checkbox"> Display tiles</label>
+        <span></span>
+        <label>Tile boundaries
+          <select id="bnd">
+            <option value="none">None</option>
+            <option value="files">Source files</option>
+            <option value="blocks">COG internal blocks</option>
+            <option value="display">Display tiles</option>
+          </select>
+        </label>
+        <label>Boundaries for
+          <select id="bndLevel"><option value="lod">Follow LOD</option></select>
+        </label>
       </div>
+      <p class="hint">Follow LOD redraws the boundaries of whatever level and overview is being read as you zoom; Fixed keeps one level's files or blocks on screen at every zoom.</p>
     </section>
 
     <section class="card">
@@ -154,13 +165,29 @@
       <span class="sep"></span>
       <button id="zoomIn" class="icon" title="Zoom in">+</button>
       <button id="zoomOut" class="icon" title="Zoom out">&minus;</button>
+      <button id="pinBtn" class="tool" title="Pin the level currently on screen">Pin level</button>
+      <button id="globeBtn" class="tool" title="3D globe of this view with vertical exaggeration">Globe</button>
       <button id="home" title="Whole continent">Home</button>
       <button id="copyLink" title="Copy a link to this view">Link</button>
+      <a class="btnlink" href="about.html" target="_blank" rel="noopener" title="Guide, and how the overviews and VRT work">Help</a>
     </div>
     <div id="readout" class="readout"></div>
     <div id="status" class="status"></div>
     <div id="scalebar" class="scalebar"><div class="bar"></div><span></span></div>
     <div id="mapMsg" class="mapMsg" hidden></div>
+    <div id="globeWrap" class="globeWrap" hidden>
+      <canvas id="globeCanvas"></canvas>
+      <div class="globeCtl">
+        <label>Exaggeration <input id="gExag" type="range" min="0" max="100" step="1" value="48"> <span id="gExagLab"></span></label>
+        <label>Texture <select id="gTex"><option>1024</option><option selected>2048</option><option>3072</option></select></label>
+        <label>Mesh <select id="gMesh"><option>256</option><option selected>400</option><option>600</option></select></label>
+        <button id="gRebuild" title="Rebuild from the map view behind this">Rebuild</button>
+        <button id="gCont" title="Whole continent">Continent</button>
+        <button id="gView" title="Back to the map to frame a new view">Pick view</button>
+        <button id="gClose" title="Back to the map">Map</button>
+        <div id="gInfo" class="hint"></div>
+      </div>
+    </div>
     <section id="panel" class="panel" hidden>
       <header><h3 id="panelTitle"></h3><button id="panelClose" class="icon" aria-label="Close">&times;</button></header>
       <div id="panelBody"></div>
@@ -168,6 +195,12 @@
   </main>
 </div>
 
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
 <script src="https://cdn.jsdelivr.net/npm/proj4@2.12.1/dist/proj4.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/fzstd@0.1.1/umd/index.js"></script>
