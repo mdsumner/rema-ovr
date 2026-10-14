@@ -717,7 +717,7 @@
     az: 315, alt: 40, exag: 0, mix: 0.65, contours: false, cint: null,
     forceLevel: 'auto', bilinear: true,
     cmp: 'none', cmpMode: 'swipe', cmpOpacity: 1, cmpDate: '2025-12-15', swipe: 0.5,
-    grat: true, bnd: 'none', bndLevel: 'lod',
+    grat: true, bnd: 'none', bndLevel: 'lod', bndColor: '#ff2d95',
     tool: 'info'
   };
   let viewCdf = null;   // for equalise stretch
@@ -1166,6 +1166,10 @@
     const lv = pin || levelByName(currentLevels[0]) || chooseLevel(tileRes(z));
     return lv ? { lv, z, R: tileRes(z), fixed: false } : null;
   }
+  function hexA(hex, a) {
+    const n = parseInt(hex.slice(1), 16);
+    return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+  }
   function strokeBox(b, dash) {
     ctx.setLineDash(dash || []);
     ctx.strokeRect(sx(b[0]) * DPR, sy(b[3]) * DPR, (b[2] - b[0]) / S.res * DPR, (b[3] - b[1]) / S.res * DPR);
@@ -1178,6 +1182,7 @@
     ctx.save();
     ctx.lineWidth = 1 * DPR;
     ctx.font = (10 * DPR) + 'px monospace';
+    ctx.shadowColor = 'rgba(0,0,0,.85)'; ctx.shadowBlur = 3 * DPR;  // keeps labels and lines legible over bright ice
     let note = '';
     if (S.bnd === 'display') {
       const span = TS * tileRes(t.z);
@@ -1186,7 +1191,7 @@
       const n = (x1 - x0 + 1) * (y1 - y0 + 1);
       if (n > 3000) note = 'display tiles z' + t.z + ': ' + n + ' in view, too many to draw';
       else {
-        ctx.strokeStyle = 'rgba(255,255,0,.45)'; ctx.fillStyle = 'rgba(255,255,0,.8)';
+        ctx.strokeStyle = hexA(S.bndColor, 0.7); ctx.fillStyle = hexA(S.bndColor, 0.95);
         const big = span / S.res > 110;
         for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) {
           const X0 = -ORIGIN + tx * span, Y0 = ORIGIN - ty * span;
@@ -1208,7 +1213,7 @@
         if (ids.length > 4000) { note = lv.name + ': ' + ids.length + ' files in view, too many to draw'; ids.length = 0; }
         urls = ids.map((i) => lv.sources[i]);
       } else ensureSources(lv).then(scheduleDraw, () => {});
-      ctx.strokeStyle = 'rgba(255,184,107,.9)'; ctx.fillStyle = 'rgba(255,184,107,.95)';
+      ctx.strokeStyle = hexA(S.bndColor, S.bnd === 'blocks' ? 0.45 : 0.9); ctx.fillStyle = hexA(S.bndColor, 0.95);
       const labels = urls.length < 80;
       for (const sitem of urls) {
         if (!sitem.bbox) continue;
@@ -1219,7 +1224,7 @@
       if (S.bnd === 'files') note = lv.name + ': ' + urls.length + ' file' + (urls.length === 1 ? '' : 's') + ' in view' + (t.fixed ? ' (fixed)' : ' (following LOD)');
       if (S.bnd === 'blocks') {
         let drawn = 0, pending = 0, small = 0, desc = new Set();
-        ctx.strokeStyle = 'rgba(108,196,255,.9)'; ctx.lineWidth = 1.5 * DPR;
+        ctx.strokeStyle = hexA(S.bndColor, 0.9); ctx.lineWidth = 1.5 * DPR;
         for (const sitem of urls.slice(0, 120)) {
           if (!levelAvailable(lv)) break;
           const cog = cogReady.get(sitem.url);
@@ -2132,7 +2137,7 @@
     if (S.cmp !== 'none') { q.set('cmp', S.cmp); q.set('cm', S.cmpMode); }
     if (S.cmp !== 'none' && GIBS[S.cmp] && GIBS[S.cmp].time) q.set('date', S.cmpDate);
     if (S.contours) q.set('cont', 1);
-    if (S.bnd !== 'none') { q.set('bnd', S.bnd); if (S.bndLevel !== 'lod') q.set('bl', S.bndLevel); }
+    if (S.bnd !== 'none') { q.set('bnd', S.bnd); if (S.bndLevel !== 'lod') q.set('bl', S.bndLevel); if (S.bndColor !== '#ff2d95') q.set('bc', S.bndColor.slice(1)); }
     if (dsnString && dsnString !== DEFAULT_DSN) q.set('dsn', dsnString);
     history.replaceState(null, '', '#' + q.toString());
   }
@@ -2154,6 +2159,7 @@
     if (q.get('cont')) S.contours = true;
     if (q.get('bnd')) S.bnd = q.get('bnd');
     if (q.get('bl')) S.bndLevel = q.get('bl');
+    if (/^[0-9a-fA-F]{6}$/.test(q.get('bc') || '')) S.bndColor = '#' + q.get('bc');
     return q.get('dsn') || DEFAULT_DSN;
   }
 
@@ -2203,6 +2209,7 @@
     set('ovGrat', 'grat');
     set('bnd', 'bnd');
     set('bndLevel', 'bndLevel');
+    set('bndColor', 'bndColor');
     $('autoRange').onclick = () => {
       computeViewStats();
       if (viewStats) setRange(viewStats.p2, viewStats.p98); else flash('Nothing on screen yet');

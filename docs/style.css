@@ -116,3 +116,4 @@ svg.chart text { fill: var(--muted); font: 10px var(--mono); }
 .globeCtl .hint { flex-basis: 100%; margin: 0; font-family: var(--mono); }
 a.btnlink { display: inline-block; padding: 4px 10px; border: 1px solid var(--line); border-radius: 6px; background: rgba(15, 20, 27, .88); color: var(--text); text-decoration: none; }
 a.btnlink:hover { border-color: var(--accent); }
+input[type=color] { width: 100%; height: 28px; padding: 1px 2px; cursor: pointer; }
