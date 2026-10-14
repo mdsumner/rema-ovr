@@ -1878,6 +1878,32 @@
     for (const b of root.querySelectorAll('button.cpy')) b.onclick = () => copyText(b.dataset.code);
   }
 
+  // ---------------------------------------------------------------- bed (Bedmap)
+  const BED = {
+    url: dsnToUrl('https://github.com/mdsumner/rema-ovr/raw/refs/heads/explorer/bedmap2.tif'),
+    label: 'Bedmap2 bed', note: 'Bedmap2 heights are relative to the GL04c geoid, REMA to the WGS84 ellipsoid; thickness here carries that offset (tens of m).'
+  };
+  function bedEnabled() { return unfilled.enabled; }
+  function gridSample(data, g, x, y) {
+    const fu = (x - g.x0) / g.res - 0.5, fv = (g.y0 - y) / g.res - 0.5;
+    const c = Math.floor(fu), r = Math.floor(fv), ax = fu - c, ay = fv - r;
+    const at = (i, j) => data[clamp(j, 0, g.H - 1) * g.W + clamp(i, 0, g.W - 1)];
+    const a = at(c, r), b = at(c + 1, r), cc = at(c, r + 1), d = at(c + 1, r + 1);
+    const v = a * (1 - ax) * (1 - ay) + b * ax * (1 - ay) + cc * (1 - ax) * ay + d * ax * ay;
+    return v === v ? v : a;
+  }
+  async function sampleBedAt(samples) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of samples) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }
+    const R = Math.max(500, Math.max(x1 - x0, y1 - y0) / 1024);
+    x0 -= 2 * R; y0 -= 2 * R; x1 += 2 * R; y1 += 2 * R;
+    const g = { x0, y0: y1, res: R, W: Math.ceil((x1 - x0) / R), H: Math.ceil((y1 - y0) / R) };
+    const out = new Float32Array(g.W * g.H).fill(NaN);
+    const cog = await openCog(BED.url);
+    await sampleCog(cog, g, out, { bilinear: true });
+    return samples.map((p) => gridSample(out, g, p[0], p[1]));
+  }
+
   // ---------------------------------------------------------------- profile tool
   function polyLen(pts) {
     let L = 0, G = 0;
@@ -1925,7 +1951,9 @@
       return v === v ? v : a;
     });
     const lvls = new Set(Array.from(ents.values()).filter((e) => e.meta).map((e) => e.meta.level));
-    profile.vals = vals; profile.G = G; profile.loading = false;
+    let bed = null, bedErr = '';
+    if (bedEnabled()) { try { bed = await sampleBedAt(samples); } catch (e) { bedErr = String(e.message || e); } }
+    profile.vals = vals; profile.bed = bed; profile.G = G; profile.loading = false;
     // ground distance per sample
     const gd = [0];
     for (let i = 1; i < samples.length; i++) gd.push(gd[i - 1] + groundLen(samples[i - 1][0], samples[i - 1][1], samples[i][0], samples[i][1]));
@@ -1934,18 +1962,28 @@
     let up = 0, down = 0;
     for (let i = 1; i < vals.length; i++) if (vals[i] === vals[i] && vals[i - 1] === vals[i - 1]) { const d = vals[i] - vals[i - 1]; if (d > 0) up += d; else down -= d; }
     const st = fin.length ? { min: Math.min(...fin), max: Math.max(...fin) } : { min: NaN, max: NaN };
-    const html = profileSvg(gd, vals) +
+    let thickHtml = '';
+    if (bed) {
+      const th = vals.map((v, i) => v - bed[i]).filter((v) => v === v);
+      const bf = bed.filter((v) => v === v);
+      if (th.length) thickHtml = '<span class="k">bed (Bedmap2)</span><span>' + Math.min(...bf).toFixed(0) + ' to ' + Math.max(...bf).toFixed(0) + ' m</span>' +
+        '<span class="k">ice thickness</span><span>' + Math.min(...th).toFixed(0) + ' to ' + Math.max(...th).toFixed(0) + ' m, mean ' + (th.reduce((a, b) => a + b, 0) / th.length).toFixed(0) + ' m <span class="muted">(REMA minus Bedmap2)</span></span>';
+    } else if (bedErr) thickHtml = '<span class="k">bed</span><span class="muted">' + escapeHtml(bedErr) + '</span>';
+    const html = profileSvg(gd, vals, bed) +
       '<div class="kv">' +
       '<span class="k">length</span><span>' + fmtDist(G) + ' ground (' + fmtDist(L) + ' grid)</span>' +
       '<span class="k">elevation</span><span>' + st.min.toFixed(1) + ' to ' + st.max.toFixed(1) + ' m</span>' +
-      '<span class="k">climb / drop</span><span>+' + up.toFixed(0) + ' m / -' + down.toFixed(0) + ' m</span>' +
+      '<span class="k">climb / drop</span><span>+' + up.toFixed(0) + ' m / -' + down.toFixed(0) + ' m</span>' + thickHtml +
       '<span class="k">sampled</span><span>' + (N + 1) + ' points every ' + fmtDist(G / N) + ', tiles at ' + fmtRes(R) + ' from level ' + Array.from(lvls).join(', ') + '</span>' +
       '<span class="k">cost</span><span>' + (ledger.req - req0) + ' req, ' + fmtBytes(ledger.bytes - b0) + ', ' + (performance.now() - t0).toFixed(0) + ' ms</span>' +
-      '</div><div class="btnrow"><button id="profCsv">Download CSV</button></div>';
+      '</div>' + (bed ? '<p class="hint">' + BED.note + '</p>' : '') +
+      '<div class="btnrow"><button id="profCsv">Download CSV</button>' + (bed ? '<button id="profGlobe">Cutaway in Globe</button>' : '') + '</div>';
     openPanel('Profile', html, true);
+    if ($('profGlobe')) $('profGlobe').onclick = () => openGlobe('profile');
     $('profCsv').onclick = () => {
-      const lines = ['dist_m,x,y,lon,lat,elev_m'];
-      samples.forEach((p, i) => { const ll = toLL(p[0], p[1]); lines.push([gd[i].toFixed(1), p[0].toFixed(1), p[1].toFixed(1), ll[0].toFixed(6), ll[1].toFixed(6), vals[i] === vals[i] ? vals[i].toFixed(2) : ''].join(',')); });
+      const lines = ['dist_m,x,y,lon,lat,elev_m' + (bed ? ',bed_m,thickness_m' : '')];
+      const f = (v, d) => (v === v ? v.toFixed(d) : '');
+      samples.forEach((p, i) => { const ll = toLL(p[0], p[1]); lines.push([gd[i].toFixed(1), p[0].toFixed(1), p[1].toFixed(1), ll[0].toFixed(6), ll[1].toFixed(6), f(vals[i], 2)].concat(bed ? [f(bed[i], 0), f(vals[i] - bed[i], 0)] : []).join(',')); });
       download(new Blob([lines.join('\n')], { type: 'text/csv' }), 'rema_profile.csv');
     };
     const svg = $('panelBody').querySelector('svg');
@@ -1959,19 +1997,22 @@
       const ln = svg.querySelector('#phl');
       const X = 44 + t * (600 - 54);
       ln.setAttribute('x1', X); ln.setAttribute('x2', X);
-      lab.textContent = fmtDist(gd[i]) + '  ' + (vals[i] === vals[i] ? vals[i].toFixed(1) + ' m' : 'nodata');
+      lab.textContent = fmtDist(gd[i]) + '  surface ' + (vals[i] === vals[i] ? vals[i].toFixed(1) + ' m' : 'nodata') +
+        (bed && bed[i] === bed[i] ? '  bed ' + bed[i].toFixed(0) + ' m  ice ' + (vals[i] - bed[i]).toFixed(0) + ' m' : '');
       scheduleDraw();
     });
     svg.addEventListener('mouseleave', () => { profileHover = null; scheduleDraw(); });
     scheduleDraw();
   }
-  function profileSvg(gd, vals) {
-    const W = 600, H = 200, l = 44, r = 10, t = 14, b = 24;
+  function profileSvg(gd, vals, bed) {
+    const W = 600, H = bed ? 240 : 200, l = 44, r = 10, t = 14, b = 24;
     const fin = vals.filter((v) => v === v);
     if (!fin.length) return '<p class="muted">No data along this line.</p>';
     let lo = Math.min(...fin), hi = Math.max(...fin);
+    const bfin = bed ? bed.filter((v) => v === v) : [];
+    if (bfin.length) lo = Math.min(lo, Math.min(...bfin));
     if (hi - lo < 1) { hi += 0.5; lo -= 0.5; }
-    const pad = (hi - lo) * 0.06; lo -= pad; hi += pad;
+    const pad = (hi - lo) * 0.06; lo -= pad * (bfin.length ? 2.5 : 1); hi += pad;
     const D = gd[gd.length - 1] || 1;
     const X = (d) => l + d / D * (W - l - r), Y = (v) => t + (hi - v) / (hi - lo) * (H - t - b);
     let path = '', pen = false;
@@ -1987,8 +2028,25 @@
     let grid = '';
     for (let v = Math.ceil(lo / ys) * ys; v <= hi; v += ys) grid += '<line x1="' + l + '" x2="' + (W - r) + '" y1="' + Y(v) + '" y2="' + Y(v) + '" stroke="#2b3440"/><text x="' + (l - 4) + '" y="' + (Y(v) + 3) + '" text-anchor="end">' + v.toFixed(ys < 1 ? 1 : 0) + '</text>';
     for (let d = 0; d <= D; d += xs) grid += '<line y1="' + t + '" y2="' + (H - b) + '" x1="' + X(d) + '" x2="' + X(d) + '" stroke="#2b3440"/><text x="' + X(d) + '" y="' + (H - b + 13) + '" text-anchor="middle">' + fmtDist(d) + '</text>';
-    return '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' + grid +
-      '<path d="' + area + '" fill="rgba(108,196,255,.18)"/>' +
+    let bedLayers = '';
+    if (bfin.length) {
+      // rock below the bed, ice between bed and surface
+      const segs = []; let seg = [];
+      vals.forEach((v, i) => { if (v === v && bed[i] === bed[i]) seg.push(i); else if (seg.length) { segs.push(seg); seg = []; } });
+      if (seg.length) segs.push(seg);
+      let rock = '', ice = '', bedLine = '';
+      for (const sg of segs) {
+        const bx = sg.map((i) => X(gd[i]).toFixed(1) + ' ' + Y(bed[i]).toFixed(1));
+        rock += 'M' + X(gd[sg[0]]).toFixed(1) + ' ' + (H - b) + 'L' + bx.join('L') + 'L' + X(gd[sg[sg.length - 1]]).toFixed(1) + ' ' + (H - b) + 'Z';
+        ice += 'M' + sg.map((i) => X(gd[i]).toFixed(1) + ' ' + Y(vals[i]).toFixed(1)).join('L') + 'L' + bx.reverse().join('L') + 'Z';
+        bedLine += 'M' + sg.map((i) => X(gd[i]).toFixed(1) + ' ' + Y(bed[i]).toFixed(1)).join('L');
+      }
+      bedLayers = '<path d="' + rock + '" fill="#6b4f3a" fill-opacity=".9"/><path d="' + ice + '" fill="#cfeaf6" fill-opacity=".28"/>' +
+        '<path d="' + bedLine + '" fill="none" stroke="#e0b088" stroke-width="1.2" vector-effect="non-scaling-stroke"/>';
+      area = '';
+    }
+    return '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="height:' + H + 'px">' + grid + bedLayers +
+      (area ? '<path d="' + area + '" fill="rgba(108,196,255,.18)"/>' : '') +
       '<path d="' + path + '" fill="none" stroke="#6cc4ff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>' +
       '<line id="phl" y1="' + t + '" y2="' + (H - b) + '" x1="-10" x2="-10" stroke="#fff" stroke-opacity=".6"/>' +
       '<text id="phov" x="' + (W - r) + '" y="10" text-anchor="end"></text></svg>';
@@ -2098,7 +2156,9 @@
     ['Beardmore Glacier', -84.0, 170.0, 128],
     ['Rothera / Peninsula', -67.5679, -68.127, 32],
     ['Ross Ice Shelf', -81.5, -175.0, 1024],
-    ['Ronne Ice Shelf', -78.5, -61.0, 1024]
+    ['Ronne Ice Shelf', -78.5, -61.0, 1024],
+    ['Dome C North (AAD Million Year Ice Core)', -75.0422, 123.6312, 30, [1360602, -905050]],
+    ['Little Dome C (Beyond EPICA)', -75.29917, 122.44516, 30, [1355099, -861471]]
   ];
   function placeXY(p) { return p[4] || toXY(p[2], p[1]); }
   function goPlace(p) {
@@ -2319,7 +2379,21 @@
 
   async function buildGlobe(which) {
     const info = $('gInfo');
-    const bb = which === 'continent' ? [-2700000, -2500000, 2750000, 3342000] : viewBbox();
+    let bb = which === 'continent' ? [-2700000, -2500000, 2750000, 3342000] : viewBbox();
+    const prof = profile && profile.bed && profile.samples ? profile : null;
+    let camPt = null;   // a map point on the side the camera looks from
+    if (which === 'profile') {
+      if (!prof) { info.textContent = 'Draw a Profile on the map first (with the Bedmap bed loaded).'; return; }
+      const xs = prof.samples.map((p) => p[0]), ys = prof.samples.map((p) => p[1]);
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      const half = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 0.7 + 2000;
+      bb = [cx - half, cy - half, cx + half, cy + half];
+      const a = prof.pts[0], z = prof.pts[prof.pts.length - 1];
+      let nx0 = -(z[1] - a[1]), ny0 = z[0] - a[0];
+      const nl = Math.hypot(nx0, ny0) || 1;
+      camPt = [cx + nx0 / nl * half, cy + ny0 / nl * half];
+    }
+    G3.lastWhich = which;
     const T = +$('gTex').value, M = +$('gMesh').value;
     const w = bb[2] - bb[0], h = bb[3] - bb[1];
     const R = Math.max(w, h) / T;
@@ -2348,10 +2422,33 @@
       hts[j * mx + i] = data[rr * W2 + c];
       xy[(j * mx + i) * 2] = X; xy[(j * mx + i) * 2 + 1] = Y;
     }
+    // cutaway: drop the terrain on the camera side of the profile line
+    const cutMode = $('gCut').value;
+    const useWall = prof && cutMode !== 'off' && prof.samples.every((p) => p[0] > bb[0] && p[0] < bb[2] && p[1] > bb[1] && p[1] < bb[3]);
+    if (!camPt) camPt = [(bb[0] + bb[2]) / 2, bb[1]];
+    let keep = null;
+    if (useWall && cutMode === 'cut') {
+      const pts = prof.pts;
+      const side = (x, y) => {
+        let best = Infinity, sgn = 0;
+        for (let k = 1; k < pts.length; k++) {
+          const ax = pts[k - 1][0], ay = pts[k - 1][1], dx = pts[k][0] - ax, dy = pts[k][1] - ay;
+          const L2 = dx * dx + dy * dy || 1;
+          const t = clamp(((x - ax) * dx + (y - ay) * dy) / L2, 0, 1);
+          const d = Math.hypot(x - ax - t * dx, y - ay - t * dy);
+          if (d < best) { best = d; sgn = Math.sign(dx * (y - ay) - dy * (x - ax)); }
+        }
+        return sgn;
+      };
+      const camSide = side(camPt[0], camPt[1]);
+      keep = new Int8Array(mx * my);
+      for (let k = 0; k < mx * my; k++) keep[k] = side(xy[k * 2], xy[k * 2 + 1]) !== camSide ? 1 : 0;
+    }
     const idx = [];
     for (let j = 0; j < my - 1; j++) for (let i = 0; i < mx - 1; i++) {
       const a = j * mx + i, b = a + 1, c = a + mx, d = c + 1;
       if (hts[a] !== hts[a] || hts[b] !== hts[b] || hts[c] !== hts[c] || hts[d] !== hts[d]) continue;
+      if (keep && keep[a] + keep[b] + keep[c] + keep[d] < 3) continue;
       idx.push(a, c, b, b, c, d);
     }
     const { THREE } = G3;
@@ -2371,12 +2468,48 @@
     const mesh = new THREE.Mesh(geom, mat);
     G3.scene.add(mesh);
     G3.mesh = mesh;
-    G3.grid = { hts, xy, mx, my, origin, w, h, bb };
+    const hs = Array.from(hts).filter((v) => v === v).sort((p, q) => p - q);
+    const centerH = hs.length ? hs[Math.floor(hs.length / 2)] : 0;
+    G3.grid = { hts, xy, mx, my, origin, w, h, bb, centerH, up: new THREE.Vector3(...origin).normalize() };
+    if (which === 'profile' && prof) {
+      // open the cutaway so the ice column is about a third of the profile length
+      const sf = prof.vals.filter((v) => v === v), bf = prof.bed.filter((v) => v === v);
+      const depth = Math.max(100, Math.max(...sf) - Math.min(...bf));
+      const ex0 = clamp((prof.G || w) * 0.33 / depth, 1, 300);
+      $('gExag').value = Math.round(40 * Math.log10(ex0));
+    }
     G3.world.position.set(-origin[0], -origin[1], -origin[2]);
+    // the wall: ice from REMA surface down to the Bedmap bed, rock below
+    if (G3.wall) { G3.scene.remove(G3.wall); G3.wall.geometry.dispose(); G3.wall.material.dispose(); G3.wall = null; }
+    if (useWall) {
+      const n = prof.samples.length;
+      const bf = prof.bed.filter((v) => v === v), sf = prof.vals.filter((v) => v === v);
+      const base = Math.min(...bf) - 0.35 * (Math.max(...sf) - Math.min(...bf));
+      const wcol = new Float32Array(n * 4 * 3);
+      const ice = [0.80, 0.91, 0.97], ice2 = [0.55, 0.75, 0.88], rock = [0.50, 0.37, 0.27], rock2 = [0.30, 0.22, 0.16];
+      for (let k = 0; k < n; k++) {
+        [ice, ice2, rock, rock2].forEach((c, q) => wcol.set(c, (k * 4 + q) * 3));
+      }
+      const widx = [];
+      for (let k = 0; k < n - 1; k++) {
+        const ok = (i) => prof.vals[i] === prof.vals[i] && prof.bed[i] === prof.bed[i];
+        if (!ok(k) || !ok(k + 1)) continue;
+        const a = k * 4, b = (k + 1) * 4;
+        widx.push(a, a + 1, b, b, a + 1, b + 1);           // ice: top -> bed
+        widx.push(a + 2, a + 3, b + 2, b + 2, a + 3, b + 3); // rock: bed -> base
+      }
+      const wg = new THREE.BufferGeometry();
+      wg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 4 * 3), 3));
+      wg.setAttribute('color', new THREE.BufferAttribute(wcol, 3));
+      wg.setIndex(widx);
+      G3.wall = new THREE.Mesh(wg, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+      G3.wall.userData = { samples: prof.samples, vals: prof.vals, bed: prof.bed, base };
+      G3.scene.add(G3.wall);
+    }
     setGlobeHeights();
     // camera: above the centre, tilted to look from the "bottom" of the map view
     const up = new THREE.Vector3(...origin).normalize();
-    const llb = toLL((bb[0] + bb[2]) / 2, bb[1]);
+    const llb = toLL(camPt[0], camPt[1]);
     const pb = ecef3(llb[0], llb[1], 0);
     const down = new THREE.Vector3(pb[0] - origin[0], pb[1] - origin[1], pb[2] - origin[2]).normalize();
     const D = Math.max(w, h) * 1.15;
@@ -2385,10 +2518,13 @@
     G3.camera.near = Math.max(1, D / 5000);
     G3.camera.updateProjectionMatrix();
     G3.controls.target.set(0, 0, 0);
+    G3.targetH = 0;
     G3.controls.minDistance = Math.max(50, D / 200);
     G3.controls.maxDistance = 4e7;
+    retargetGlobe();
     G3.controls.update();
-    info.textContent = nx + ' x ' + ny + ' texture at ' + fmtRes(R) + ' from level ' + r.level + ' (' + r.n + ' file' + (r.n === 1 ? '' : 's') + '), ' + mx + ' x ' + my + ' mesh | ' +
+    info.textContent = (useWall ? 'cutaway along the profile, bed from Bedmap2 (geoid heights) | ' : (prof && cutMode !== 'off' ? 'profile not inside this view, no cutaway | ' : '')) +
+      nx + ' x ' + ny + ' texture at ' + fmtRes(R) + ' from level ' + r.level + ' (' + r.n + ' file' + (r.n === 1 ? '' : 's') + '), ' + mx + ' x ' + my + ' mesh | ' +
       (ledger.req - req0) + ' req, ' + fmtBytes(ledger.bytes - b0) + ', ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s';
     if (!G3.running) globeLoop();
   }
@@ -2410,6 +2546,29 @@
     G3.mesh.geometry.attributes.position.needsUpdate = true;
     G3.mesh.geometry.computeVertexNormals();
     G3.mesh.geometry.computeBoundingSphere();
+    if (G3.wall) {
+      const { samples, vals, bed, base } = G3.wall.userData;
+      const wp = G3.wall.geometry.attributes.position.array;
+      samples.forEach((p, k) => {
+        const ll = toLL(p[0], p[1]);
+        const top = vals[k] === vals[k] ? vals[k] : 0, bd = bed[k] === bed[k] ? bed[k] : top;
+        [top, bd, bd, base].forEach((hv, q) => {
+          const e = ecef3(ll[0], ll[1], hv * ex);
+          wp.set([e[0] - origin[0], e[1] - origin[1], e[2] - origin[2]], (k * 4 + q) * 3);
+        });
+      });
+      G3.wall.geometry.attributes.position.needsUpdate = true;
+      G3.wall.geometry.computeBoundingSphere();
+    }
+  }
+  // keep the orbit centre on the (exaggerated) surface at the mesh centre
+  function retargetGlobe() {
+    if (!G3 || !G3.grid) return;
+    const hNew = G3.grid.centerH * globeExag();
+    const d = G3.grid.up.clone().multiplyScalar(hNew - (G3.targetH || 0));
+    G3.controls.target.add(d);
+    G3.camera.position.add(d);
+    G3.targetH = hNew;
   }
   async function openGlobe(which) {
     $('globeWrap').hidden = false;
@@ -2427,10 +2586,11 @@
     $('globeBtn').onclick = () => ($('globeWrap').hidden ? openGlobe('view') : closeGlobe());
     $('gClose').onclick = closeGlobe;
     $('gView').onclick = () => { closeGlobe(); flash('Frame the view you want, then press Globe again', 2500); };
-    $('gRebuild').onclick = () => buildGlobe('view');
+    $('gRebuild').onclick = () => buildGlobe(G3 && G3.lastWhich === 'profile' ? 'profile' : 'view');
+    $('gCut').addEventListener('change', () => { if (G3) buildGlobe(G3.lastWhich || 'view'); });
     $('gCont').onclick = () => buildGlobe('continent');
-    $('gExag').addEventListener('input', setGlobeHeights);
-    $('gExag').addEventListener('change', setGlobeHeights);
+    $('gExag').addEventListener('input', () => { setGlobeHeights(); retargetGlobe(); });
+    $('gExag').addEventListener('change', () => { setGlobeHeights(); retargetGlobe(); });
   }
 
   // ---------------------------------------------------------------- go
