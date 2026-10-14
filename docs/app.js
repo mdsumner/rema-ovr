@@ -1865,12 +1865,15 @@
   // ---------------------------------------------------------------- recipes
   function recipeHtml(bb, res) {
     const nx = Math.round((bb[2] - bb[0]) / res), ny = Math.round((bb[3] - bb[1]) / res);
+    // give only the long side; 0 lets GDAL derive the other from the extent's aspect
+    const dx = nx >= ny ? nx : 0, dy = nx >= ny ? 0 : ny;
     const te = bb.map((v) => Math.round(v)).join(' ');
+    const ext4 = [bb[0], bb[2], bb[1], bb[3]].map((v) => Math.round(v)).join(', ');
     const dsn = dsnString.startsWith('/vsi') ? dsnString : '/vsicurl/' + dsnString;
-    const cli = 'gdalwarp -te ' + te + ' -ts ' + nx + ' ' + ny + ' -r bilinear \\\n  ' + dsn + ' rema_box.tif';
-    const py = 'from osgeo import gdal\ngdal.UseExceptions()\ndsn = "' + dsn + '"\nds = gdal.Warp("rema_box.tif", dsn,\n  outputBounds=[' + bb.map((v) => Math.round(v)).join(', ') + '],\n  width=' + nx + ', height=' + ny + ', resampleAlg="bilinear")\na = ds.ReadAsArray()';
-    const r = 'dsn <- "' + dsn + '"\nv <- vapour::gdal_raster_data(dsn,\n  target_ext = c(' + [bb[0], bb[2], bb[1], bb[3]].map((v) => Math.round(v)).join(', ') + '),\n  target_dim = c(' + nx + ', ' + ny + '), target_crs = "EPSG:3031", resample = "bilinear")\n' +
-      '## or terra\nlibrary(terra)\nr <- project(rast(dsn), rast(ext(' + [bb[0], bb[2], bb[1], bb[3]].map((v) => Math.round(v)).join(', ') + '), ncols = ' + nx + ', nrows = ' + ny + ', crs = "EPSG:3031"), by_util = TRUE)';
+    const cli = 'gdalwarp -te ' + te + ' -ts ' + dx + ' ' + dy + ' -r bilinear \\\n  ' + dsn + ' rema_box.tif';
+    const py = 'from osgeo import gdal\ngdal.UseExceptions()\ndsn = "' + dsn + '"\nds = gdal.Warp("rema_box.tif", dsn,\n  outputBounds=[' + bb.map((v) => Math.round(v)).join(', ') + '],\n  width=' + dx + ', height=' + dy + ', resampleAlg="bilinear")\na = ds.ReadAsArray()';
+    const r = 'dsn <- "' + dsn + '"\nv <- vapour::gdal_raster_data(dsn,\n  target_ext = c(' + ext4 + '),\n  target_dim = c(' + dx + ', ' + dy + '), target_crs = "EPSG:3031", resample = "bilinear")\n' +
+      '## or terra (needs both dimensions)\nlibrary(terra)\nr <- project(rast(dsn), rast(ext(' + ext4 + '), ncols = ' + nx + ', nrows = ' + ny + ', crs = "EPSG:3031"), by_util = TRUE)';
     const block = (lab, code) => '<div class="subh">' + lab + ' <button class="cpy" data-code="' + escapeHtml(code) + '">copy</button></div><pre class="code">' + escapeHtml(code) + '</pre>';
     return block('GDAL CLI', cli) + block('Python', py) + block('R', r);
   }
